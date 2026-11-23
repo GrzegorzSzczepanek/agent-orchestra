@@ -1,0 +1,29 @@
+[project]
+name = "agent-orchestra"
+version = "0.1.0"
+description = "Orkiestrator agentów kodujących z hierarchią kosztową (ACP, MCP, Textual)"
+requires-python = ">=3.11"
+dependencies = [
+    "agent-client-protocol>=1.0",
+    "fastmcp>=4.2",
+    "textual>=8.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=9", "pytest-asyncio>=1.5"]
+
+[project.scripts]
+orchestra-mcp = "orchestra.mcp_server:main"
+orchestra-tui = "orchestra.tui:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/orchestra"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]

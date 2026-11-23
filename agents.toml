@@ -1,0 +1,40 @@
+# Konfiguracja agentów. Komendy do weryfikacji na swojej maszynie (patrz README).
+# acp: komenda uruchamiająca serwer ACP po stdio (jeden proces, jeden katalog projektu)
+# headless: szablon komendy trybu nieinteraktywnego, {task} i {model} są podstawiane
+
+[roles]
+planner = "claude"
+reviewer = "claude"
+implementer = "commandcode"
+researcher = "antigravity"
+
+[agents.claude]
+description = "Claude Code przez oficjalny adapter ACP (niezmodyfikowany binarny claude na własnym koncie)"
+acp = ["claude-agent-acp"]
+headless = ["claude", "-p", "{task}", "--output-format", "json"]
+tier = "strong"
+
+[agents.codex]
+description = "Codex CLI przez adapter ACP"
+acp = ["codex-acp"]
+headless = ["codex", "exec", "{task}"]
+tier = "strong"
+
+[agents.antigravity]
+description = "Antigravity CLI (agy), natywny ACP od wersji 1.5.0"
+acp = ["agy", "acp"]
+headless = ["agy", "-p", "{task}"]
+tier = "strong"
+
+[agents.opencode]
+description = "OpenCode, natywny ACP"
+acp = ["opencode", "acp"]
+headless = ["opencode", "run", "{task}"]
+tier = "cheap"
+
+[agents.commandcode]
+description = "Command Code (commandcode.ai), plan Go działa tylko przez CLI"
+acp = ["cmd", "acp"]
+headless = ["cmd", "-p", "{task}", "--model", "{model}", "--output-format", "json", "--max-turns", "30", "--yolo"]
+default_model = "deepseek/deepseek-v4.1-flash"
+tier = "cheap"
