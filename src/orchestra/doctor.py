@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import platform
+import re
 import shutil
 import sys
 import tempfile
@@ -131,6 +132,59 @@ def _first_line(text: str, limit: int = 200) -> str:
     return ""
 
 
+_VERSION_RE = re.compile(r"^v?\d+\.\d+(\.\d+)?\S{0,30}$")
+
+
+def _looks_like_version(line: str) -> bool:
+    """Wersja to krótki token (np. `1.93.2`), a nie surowa linia błędu czy kawałek minifikowanego kodu."""
+    return bool(_VERSION_RE.match(line.split(" ")[0])) and len(line) <= 80
+
+
+def _node_engines(binary: str) -> str:
+    """Pole engines.node pakietu npm, do którego należy binarka (idziemy w górę od realpath)."""
+    exe = shutil.which(binary)
+    if not exe:
+        return ""
+    for parent in Path(exe).resolve().parents:
+        pkg = parent / "package.json"
+        if pkg.is_file():
+            try:
+                data = json.loads(pkg.read_text())
+            except (OSError, ValueError):
+                continue
+            if data.get("bin") or data.get("name"):
+                return str(data.get("engines", {}).get("node", ""))
+    return ""
+
+
+def _node_satisfies(version: str, engines: str) -> bool | None:
+    """Obsługuje zakres `>=N[.M]`; dla innych zapisów zwraca None (nie rozstrzygamy)."""
+    m = re.fullmatch(r"\s*>=\s*v?(\d+)(?:\.(\d+))?[\d.]*\s*", engines)
+    v = re.match(r"v?(\d+)\.(\d+)", version)
+    if not (m and v):
+        return None
+    return (int(v[1]), int(v[2])) >= (int(m[1]), int(m[2] or 0))
+
+
+async def _diagnose_crash(binary: str, out: str, err: str, timeout: float) -> tuple[str, str]:
+    """Zamienia crash przy starcie (stack trace z cli.mjs) w czytelny komunikat i podpowiedź."""
+    engines = _node_engines(binary)
+    node = ""
+    try:
+        _, nout, _ = await _capture(["node", "-v"], timeout)
+        node = _first_line(nout)
+    except Exception:  # noqa: BLE001
+        pass
+    if engines and node and _node_satisfies(node, engines) is False:
+        need = engines.replace(">=", "").strip()
+        return (f"{binary} nie startuje: wymagany Node >={need}, masz {node}",
+                f"przełącz Node (np. `nvm use {need}`) albo zainstaluj pakiet pod nowszym Node")
+    lines = [l.strip() for l in (err or out).splitlines() if l.strip()]
+    err_line = next((l for l in reversed(lines) if re.match(r"^\w*Error\b", l)), "")
+    return (f"{binary} nie startuje ({(err_line or 'nieznany błąd')[:160]}), Node {node or '?'}",
+            "uruchom `cmd --version` ręcznie i sprawdź wersję Node względem engines pakietu")
+
+
 async def _check_commandcode(
     rep: Report, agent: AgentConfig, *, smoke: bool, model: str, timeout: float, cwd: str
 ) -> None:
@@ -146,10 +200,20 @@ async def _check_commandcode(
     try:
         code, out, err = await _capture([binary, "--version"], timeout)
         version = _first_line(out) or _first_line(err)
+        crashed = code != 0 or not _looks_like_version(version)
+        hint = ""
+        if crashed:
+            detail, hint = await _diagnose_crash(binary, out, err, timeout)
     except Exception as exc:  # noqa: BLE001
-        code, version = 1, f"{type(exc).__name__}: {exc}"
-    rep.meta["cmd_version"] = version
-    rep.add("cmd: binarka", PASS if code == 0 else FAIL, f"{binary} {version}")
+        crashed, detail, hint, version = True, f"{binary}: {type(exc).__name__}: {exc}", "", ""
+    rep.meta["cmd_version"] = "" if crashed else version
+    if crashed:
+        rep.add("cmd: binarka", FAIL, detail, hint)
+        for name in ("cmd: logowanie", "cmd: lista modeli", "cmd: smoke test headless", "cmd: ACP initialize",
+                     "cmd: ACP session/new"):
+            rep.add(name, SKIP, "pominięte, bo cmd nie startuje")
+        return
+    rep.add("cmd: binarka", PASS, f"{binary} {version}")
 
     # logowanie (zmienna COMMAND_CODE_API_KEY ma pierwszeństwo przed `cmd login`)
     try:

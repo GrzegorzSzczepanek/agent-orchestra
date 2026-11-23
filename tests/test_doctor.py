@@ -165,3 +165,48 @@ async def test_acp_child_gets_only_passthrough_env(fake_path, monkeypatch, tmp_p
     monkeypatch.setenv("OTHER_SECRET", "cos-innego-123456")
     await run_doctor(_with_extra_passthrough("FAKE_CMD_DUMP"), timeout=20, others=False)
     assert json.loads(dump.read_text()) == {"has_key": True, "has_other": False}
+
+
+CRASH_CLI = f"""#!{sys.executable}
+import sys
+sys.stderr.write("file:///x/command-code/dist/cli.mjs:2\\n" + "import*as e from\\"path\\";" * 400 + "\\n\\n")
+sys.stderr.write("SyntaxError: The requested module '@opentelemetry/semantic-conventions' does not provide an export named 'default'\\n")
+sys.stderr.write("    at ModuleJob._instantiate (node:internal/modules/esm/module_job:213:21)\\n\\nNode.js v20.19.5\\n")
+sys.exit(1)
+"""
+
+
+def _crashing_cmd(tmp_path: Path, monkeypatch, node_version: str, engines: str = ">=22") -> None:
+    pkg = tmp_path / "lib" / "command-code"
+    (pkg / "dist").mkdir(parents=True)
+    (pkg / "package.json").write_text(json.dumps({"name": "command-code", "engines": {"node": engines}}))
+    cli = pkg / "dist" / "cli.mjs"
+    cli.write_text(CRASH_CLI)
+    cli.chmod(cli.stat().st_mode | stat.S_IEXEC)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "cmd").symlink_to(cli)  # jak globalna instalacja npm: bin to symlink do pakietu
+    node = bin_dir / "node"
+    node.write_text(f"#!{sys.executable}\nprint({node_version!r})\n")
+    node.chmod(node.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+
+async def test_doctor_cmd_crash_reports_node_requirement(tmp_path, monkeypatch):
+    _crashing_cmd(tmp_path, monkeypatch, "v20.19.5")
+    rep = await run_doctor(load_config(ROOT / "agents.toml"), timeout=10, others=False)
+    c = by_name(rep)
+    b = c["cmd: binarka"]
+    assert b.status == FAIL
+    assert "wymagany Node >=22, masz v20.19.5" in b.detail
+    assert len(b.detail) < 200 and "import*as" not in b.detail
+    assert rep.meta["cmd_version"] == ""
+    assert c["cmd: ACP initialize"].status == SKIP
+
+
+async def test_doctor_cmd_crash_with_ok_node_shows_error_line_not_stacktrace(tmp_path, monkeypatch):
+    _crashing_cmd(tmp_path, monkeypatch, "v22.23.5")
+    rep = await run_doctor(load_config(ROOT / "agents.toml"), timeout=10, others=False)
+    b = by_name(rep)["cmd: binarka"]
+    assert b.status == FAIL
+    assert "SyntaxError" in b.detail and "import*as" not in b.detail and len(b.detail) < 260
