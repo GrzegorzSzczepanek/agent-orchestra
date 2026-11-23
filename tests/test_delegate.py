@@ -89,6 +89,11 @@ async def test_mcp_tool_end_to_end(git_repo: Path):
         })
         data = r.data
         assert data["status"] == "ok" and data["test_exit_code"] == 0
+    # delegowanie trafia do wspólnego logu (widać je w TUI)
+    from orchestra.store import EventStore
+
+    evs = EventStore(git_repo / ".orchestra" / "events.db").events(agent="worker:fake")
+    assert [e.kind for e in evs] == ["delegate"] and evs[0].payload["status"] == "ok"
 
 
 async def test_mcp_stdio_subprocess(git_repo: Path):
