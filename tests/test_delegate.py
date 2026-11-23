@@ -82,7 +82,7 @@ async def test_mcp_tool_end_to_end(git_repo: Path):
     server = build_server(config=cfg(), repo=git_repo)
     async with Client(server) as client:
         tools = await client.list_tools()
-        assert [t.name for t in tools] == ["delegate"]
+        assert sorted(t.name for t in tools) == ["delegate", "post_message", "read_inbox"]
         r = await client.call_tool("delegate", {
             "prompt": "napraw", "worker": "fake", "fake_files": {**FIX, TEST: TEST_SRC},
             "test_cmd": f"{sys.executable} -m pytest -q {TEST}", "keep_worktree": False,
@@ -104,3 +104,11 @@ async def test_mcp_stdio_subprocess(git_repo: Path):
         r = await client.call_tool("delegate", {
             "prompt": "napraw", "worker": "fake", "fake_files": FIX, "keep_worktree": False})
         assert r.data["status"] == "ok" and "+    return a + b" in r.data["diff"]
+
+
+async def test_mcp_messages(git_repo: Path):
+    server = build_server(config=cfg(), repo=git_repo)
+    async with Client(server) as client:
+        mid = (await client.call_tool("post_message", {"from_agent": "p", "to_agent": "i", "body": "hej"})).data
+        inbox = (await client.call_tool("read_inbox", {"agent": "i"})).data
+        assert mid == 1 and inbox[0]["body"] == "hej" and inbox[0]["from_agent"] == "p"
