@@ -127,6 +127,18 @@ class EventStore:
         return {r["agent"]: {"tokens_in": r["ti"] or 0, "tokens_out": r["tout"] or 0, "cost": r["c"] or 0.0}
                 for r in rows}
 
+    def usage_for_task(self, run_id: str, task_id: str) -> dict[str, float]:
+        """Suma tokenów i kosztu prób zadania (zdarzenia task_attempt) w danym przebiegu."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT SUM(tokens_in) ti, SUM(tokens_out) tout, SUM(cost) c, COUNT(*) n FROM events "
+                "WHERE kind = 'task_attempt' AND json_extract(payload_json, '$.run_id') = ? "
+                "AND json_extract(payload_json, '$.task_id') = ?",
+                (run_id, task_id),
+            ).fetchone()
+        return {"tokens_in": row["ti"] or 0, "tokens_out": row["tout"] or 0, "cost": row["c"] or 0.0,
+                "attempts": row["n"] or 0}
+
     # --- wiadomości ---
     def post_message(self, from_agent: str, to_agent: str, body: str, thread: str = "") -> int:
         with self._lock, self._db:
