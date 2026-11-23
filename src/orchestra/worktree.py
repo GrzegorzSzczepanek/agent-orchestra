@@ -65,3 +65,9 @@ async def diff(wt: Worktree) -> str:
 async def remove_worktree(repo: str | Path, wt: Worktree) -> None:
     await git(["worktree", "remove", "--force", str(wt.path)], repo)
     await git(["branch", "-D", wt.branch], repo)
+
+
+async def view_diff(path: str | Path) -> str:
+    """Diff niezatwierdzonych zmian w worktree względem HEAD (nowe pliki przez intent-to-add)."""
+    await git(["add", "-N", "."], path)
+    return await git(["diff", "--no-color", "HEAD"], path)
