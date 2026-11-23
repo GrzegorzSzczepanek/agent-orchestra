@@ -35,6 +35,10 @@ tier = "cheap"
 [agents.commandcode]
 description = "Command Code (commandcode.ai), plan Go działa tylko przez CLI"
 acp = ["cmd", "acp"]
-headless = ["cmd", "-p", "{task}", "--model", "{model}", "--output-format", "json", "--max-turns", "30", "--yolo"]
-default_model = "deepseek/deepseek-v4.1-flash"
+headless = ["cmd", "-p", "{task}", "--model", "{model}", "--output-format", "json", "--max-turns", "30", "--yolo", "--skip-onboarding"]
+# Model: ID z `cmd --list-models` (pełne albo część po ostatnim "/"). Brak modelu to jasny błąd.
+# Ustaw zmienną ORCHESTRA_CMD_MODEL albo wpisz default_model, np. "deepseek/deepseek-v4.1-flash".
+model_env = "ORCHESTRA_CMD_MODEL"
+default_model = ""
+require_model = true
 tier = "cheap"

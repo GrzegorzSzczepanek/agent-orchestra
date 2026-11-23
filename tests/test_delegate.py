@@ -61,16 +61,16 @@ async def test_headless_worker_script_parses_cmd_json(git_repo: Path, tmp_path: 
     res = await delegate(c, git_repo, "napraw", worker="cmdlike")
     assert res.status == "ok"
     assert res.worker_text == "gotowe"
-    assert res.usage == {"inputTokens": 10, "outputTokens": 5}
+    assert res.usage["tokens_in"] == 10 and res.usage["tokens_out"] == 5
     assert "+    return a + b" in res.diff
 
 
 async def test_worker_nonzero_exit(git_repo: Path, tmp_path: Path):
     script = tmp_path / "bad.py"
-    script.write_text("import sys; sys.exit(4)\n")
+    script.write_text("import sys; sys.exit(2)\n")
     c = cfg(bad=AgentConfig(name="bad", headless=(sys.executable, str(script))))
     res = await delegate(c, git_repo, "x", worker="bad")
-    assert res.status == "worker_failed" and res.worker_exit_code == 4
+    assert res.status == "worker_failed" and res.worker_exit_code == 2
 
 
 def test_parse_ignores_garbage():

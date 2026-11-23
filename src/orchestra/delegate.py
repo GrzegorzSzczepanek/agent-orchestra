@@ -12,19 +12,25 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .config import Config
+from .commandcode import HeadlessResult, mask_secrets, parse_headless_output, status_for_exit_code
+from .config import Config, ModelRequired
 from .worktree import Worktree, create_worktree, diff, remove_worktree, run
 
 
 @dataclass
 class DelegateResult:
-    status: str  # ok | tests_failed | worker_failed | worker_not_found | timeout
+    # ok | tests_failed | worker_failed | worker_not_found | timeout | config_error
+    # statusy z kodów wyjścia workera: max_turns | insufficient_credits | auth_failed | rate_limited |
+    # connection_error | server_error | permission_denied | no_response | interrupted
+    status: str
     worktree: str = ""
     branch: str = ""
     worker: str = ""
     worker_exit_code: int | None = None
     worker_text: str = ""
-    usage: dict[str, Any] = field(default_factory=dict)
+    usage: dict[str, Any] = field(default_factory=dict)  # tokens_in, tokens_out, cache_read, cache_write
+    cost_usd: float = 0.0
+    session_id: str = ""
     test_cmd: str = ""
     test_exit_code: int | None = None
     test_output: str = ""
@@ -36,22 +42,11 @@ class DelegateResult:
 
 
 def parse_command_code_output(stdout: str) -> tuple[str, dict[str, Any], str]:
-    """Parsuje NDJSON z `cmd -p --output-format json`: zwraca (finalText, usage, subtype).
-
-    Ostatnia linia ma type=result (pola: subtype, usage, finalText). Pola opcjonalne
-    traktujemy ostrożnie, bo wczesne błędy je pomijają.
-    """
-    for line in reversed(stdout.splitlines()):
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if obj.get("type") == "result":
-            return obj.get("finalText", ""), obj.get("usage") or {}, obj.get("subtype", "")
-    return stdout[-2000:], {}, ""
+    """Zgodność wsteczna: (finalText, usage, subtype). Szczegóły w commandcode.parse_headless_output."""
+    hr = parse_headless_output(stdout)
+    if not hr.found_result:
+        return stdout[-2000:], {}, ""
+    return hr.final_text, hr.usage, hr.subtype
 
 
 def _tail(text: str, limit: int = 4000) -> str:
@@ -90,7 +85,11 @@ async def delegate(
             if agent is None:
                 res.status, res.error = "worker_failed", f"Nieznany worker: {worker}"
                 return res
-            argv = agent.headless_argv(prompt, model or None)
+            try:
+                argv = agent.headless_argv(prompt, model or None)
+            except ModelRequired as exc:
+                res.status, res.error = "config_error", str(exc)
+                return res
             try:
                 code, out, err = await run(argv, wt.path, timeout=timeout_s)
             except FileNotFoundError:
@@ -100,11 +99,20 @@ async def delegate(
                 res.status, res.error = "timeout", f"Worker przekroczył {timeout_s}s"
                 return res
             res.worker_exit_code = code
-            text, usage, subtype = parse_command_code_output(out)
-            res.worker_text, res.usage = _tail(text), usage
-            if code != 0 or subtype in ("error", "max_turns"):
+            hr: HeadlessResult = parse_headless_output(out)
+            if hr.found_result:
+                res.worker_text = _tail(mask_secrets(hr.final_text))
+            else:
+                res.worker_text = _tail(mask_secrets(out[-2000:]))
+            res.usage, res.cost_usd, res.session_id = hr.usage, hr.cost_usd, hr.session_id
+            if code != 0:
+                res.status = status_for_exit_code(code)
+            elif hr.subtype == "max_turns":
+                res.status = "max_turns"
+            elif hr.subtype == "error":
                 res.status = "worker_failed"
-                res.error = _tail(err or subtype)
+            if res.status != "ok":
+                res.error = _tail(mask_secrets(hr.error or err.strip() or hr.subtype or f"kod wyjścia {code}"))
 
         if test_cmd and res.status == "ok":
             tcode, tout, terr = await run(shlex.split(test_cmd), wt.path, timeout=timeout_s)

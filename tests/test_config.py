@@ -19,10 +19,22 @@ def test_headless_argv_substitution():
     assert argv[argv.index("--model") + 1] == "m1"
 
 
-def test_headless_argv_default_model_and_missing_model():
+def test_commandcode_requires_model_with_clear_message(monkeypatch):
+    import pytest
+
+    from orchestra.config import ModelRequired
+
+    monkeypatch.delenv("ORCHESTRA_CMD_MODEL", raising=False)
     cfg = load_config(ROOT / "agents.toml")
+    with pytest.raises(ModelRequired, match="ORCHESTRA_CMD_MODEL"):
+        cfg.agents["commandcode"].headless_argv("t")
+    # zmienna środowiskowa, potem argument (argument wygrywa)
+    monkeypatch.setenv("ORCHESTRA_CMD_MODEL", "z-ai/glm-5.3-flash")
     argv = cfg.agents["commandcode"].headless_argv("t")
-    assert "deepseek/deepseek-v4.1-flash" in argv
+    assert argv[argv.index("--model") + 1] == "z-ai/glm-5.3-flash"
+    argv = cfg.agents["commandcode"].headless_argv("t", "kimi-k2.5")
+    assert argv[argv.index("--model") + 1] == "kimi-k2.5"
+    assert "--output-format" in argv and "json" in argv
     # agent bez {model} i bez default_model nie dostaje flagi --model
     from orchestra.config import AgentConfig
 
