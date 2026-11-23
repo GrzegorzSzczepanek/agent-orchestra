@@ -135,7 +135,8 @@ class ModelInfo:
 def parse_models(text: str) -> list[ModelInfo]:
     """Parsuje wyjście `cmd --list-models` (sekcje i wiersze `id   opis`).
 
-    Wiersze pomocnicze ("Docs:  https://...", "cmd --model x") są odrzucane.
+    Wiersze pomocnicze ("Docs:  https://...", "cmd --model x") oraz sekcja "Decision models (headless only)"
+    są pomijane, dzięki czemu liczba modeli zgadza się z nagłówkiem (105 w cmd 1.93.2).
     """
     models: list[ModelInfo] = []
     section = ""
@@ -144,6 +145,8 @@ def parse_models(text: str) -> list[ModelInfo]:
         if not line.strip():
             continue
         m = _MODEL_LINE.match(line.strip())
+        if section.lower().startswith("decision models"):
+            continue  # specjalne modele tylko dla headless (np. typesafe/jev), nie nadają się na workera kodującego
         if m and not m["id"].endswith(":") and "://" not in m["id"]:
             models.append(ModelInfo(m["id"], m["desc"].strip(), section))
         elif not line.startswith(" ") and "  " not in line.strip():

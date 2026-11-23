@@ -1,5 +1,6 @@
 # Konfiguracja agentów. Komendy do weryfikacji na swojej maszynie (patrz README).
 # acp: komenda uruchamiająca serwer ACP po stdio (jeden proces, jeden katalog projektu)
+# env_passthrough: zmienne środowiskowe przekazywane agentowi ACP (SDK domyślnie daje okrojone środowisko)
 # headless: szablon komendy trybu nieinteraktywnego, {task} i {model} są podstawiane
 
 [roles]
@@ -11,18 +12,21 @@ researcher = "antigravity"
 [agents.claude]
 description = "Claude Code przez oficjalny adapter ACP (niezmodyfikowany binarny claude na własnym koncie)"
 acp = ["claude-agent-acp"]
+# env_passthrough celowo puste: logowanie subskrypcją. Wpisz ["ANTHROPIC_API_KEY"] tylko gdy chcesz rozliczanie przez API
 headless = ["claude", "-p", "{task}", "--output-format", "json"]
 tier = "strong"
 
 [agents.codex]
 description = "Codex CLI przez adapter ACP"
 acp = ["codex-acp"]
+# env_passthrough celowo puste (logowanie kontem); dla klucza API wpisz ["OPENAI_API_KEY"]
 headless = ["codex", "exec", "{task}"]
 tier = "strong"
 
 [agents.antigravity]
 description = "Antigravity CLI (agy), natywny ACP od wersji 1.5.0"
 acp = ["agy", "acp"]
+# env_passthrough puste: logowanie kontem Google; dla klucza API dopisz zmienne wg dokumentacji agy
 headless = ["agy", "-p", "{task}"]
 tier = "strong"
 
@@ -35,6 +39,7 @@ tier = "cheap"
 [agents.commandcode]
 description = "Command Code (commandcode.ai), plan Go działa tylko przez CLI"
 acp = ["cmd", "acp"]
+env_passthrough = ["COMMAND_CODE_API_KEY", "CMD_ZDR", "CMD_LOCAL_ONLY"]
 headless = ["cmd", "-p", "{task}", "--model", "{model}", "--output-format", "json", "--max-turns", "30", "--yolo", "--skip-onboarding"]
 # Model: ID z `cmd --list-models` (pełne albo część po ostatnim "/"). Brak modelu to jasny błąd.
 # Ustaw zmienną ORCHESTRA_CMD_MODEL albo wpisz default_model, np. "deepseek/deepseek-v4.1-flash".

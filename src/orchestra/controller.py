@@ -22,6 +22,7 @@ class AgentSpec:
     argv: Sequence[str]
     cwd: str
     mcp_servers: Sequence[McpServerStdio] = field(default_factory=tuple)
+    env: dict[str, str] = field(default_factory=dict)
 
 
 async def specs_from_config(config: Config, repo: str | Path, names: Sequence[str]) -> list[AgentSpec]:
@@ -30,7 +31,7 @@ async def specs_from_config(config: Config, repo: str | Path, names: Sequence[st
     for name in names:
         agent = config.agents[name]
         wt = await create_worktree(repo, name=name)
-        specs.append(AgentSpec(name, agent.acp, str(wt.path)))
+        specs.append(AgentSpec(name, agent.acp, str(wt.path), env=agent.acp_env()))
     return specs
 
 
@@ -51,7 +52,8 @@ class Controller:
     async def start_all(self) -> None:
         for spec in self.specs.values():
             session = AgentSession(spec.name, spec.argv, spec.cwd, self.store,
-                                   mcp_servers=spec.mcp_servers, permission_handler=self._handler)
+                                   mcp_servers=spec.mcp_servers, permission_handler=self._handler,
+                                   env=spec.env or None)
             try:
                 self.sessions[spec.name] = await self._stack.enter_async_context(session)
             except Exception:  # noqa: BLE001 - błąd jest już zapisany jako zdarzenie "error"

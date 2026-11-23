@@ -67,7 +67,8 @@ def test_exit_code_mapping():
 def test_parse_models_real_output():
     models = parse_models((FIX / "cmd_list_models.txt").read_text())
     ids = {m.id for m in models}
-    assert len(models) > 80
+    assert len(models) == 105  # tyle podaje nagłówek `Available models · 105 models`
+    assert "typesafe/jev" not in {m.id for m in models}
     assert {"deepseek/deepseek-v4.1-flash", "z-ai/glm-5.3-flash", "moonshotai/kimi-k2.5"} <= ids
     # linie pomocnicze nie są modelami
     assert not any(i.startswith(("cmd", "Docs", "Pass")) for i in ids)

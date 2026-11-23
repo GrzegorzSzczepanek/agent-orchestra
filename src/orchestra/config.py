@@ -22,6 +22,13 @@ class AgentConfig:
     default_model: str = ""
     model_env: str = ""  # nazwa zmiennej środowiskowej z ID modelu (np. ORCHESTRA_CMD_MODEL)
     require_model: bool = False  # gdy true, brak modelu to jasny błąd zamiast domyślnego modelu agenta
+    # Zmienne środowiskowe przekazywane agentowi uruchamianemu po ACP. SDK ACP startuje proces z okrojonym
+    # środowiskiem (HOME, PATH itp.), więc np. COMMAND_CODE_API_KEY trzeba przekazać jawnie.
+    env_passthrough: tuple[str, ...] = ()
+
+    def acp_env(self) -> dict[str, str]:
+        """Zmienne z env_passthrough, które są ustawione w bieżącym środowisku."""
+        return {k: os.environ[k] for k in self.env_passthrough if os.environ.get(k)}
 
     def resolve_model(self, model: str | None = None) -> str:
         """Kolejność: argument, zmienna środowiskowa model_env, pole default_model."""
@@ -71,6 +78,7 @@ def load_config(path: str | Path = "agents.toml") -> Config:
             default_model=raw.get("default_model", ""),
             model_env=raw.get("model_env", ""),
             require_model=bool(raw.get("require_model", False)),
+            env_passthrough=tuple(raw.get("env_passthrough", ())),
         )
         for name, raw in data.get("agents", {}).items()
     }
