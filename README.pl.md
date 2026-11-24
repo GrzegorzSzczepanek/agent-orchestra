@@ -89,8 +89,8 @@ implementer = "mycli"
 | --- | --- |
 | Claude Code | zweryfikowany end-to-end (przebieg, TUI, recenzja diffu) |
 | brak (samo TUI) | zweryfikowany end-to-end z plannerem i workerami Command Code, przy braku `claude` w PATH |
-| OpenCode | serwer MCP się łączy (`opencode mcp list`), wołanie narzędzi przez model niezweryfikowane (darmowy limit skończył się na maszynie testowej) |
-| Codex | podpięcie napisane według dokumentacji [MCP](https://developers.openai.com/codex/mcp) i [konfiguracji](https://developers.openai.com/codex/config-reference), pokryte tylko testami jednostkowymi, brak binarki do uruchomienia |
+| OpenCode | zweryfikowany ze skryptowym modelem: serwer MCP się łączy, instrukcja dociera, `run_plan` i `run_status` działają bez monitów o zgodę, a testy workera trafiają na gałąź integracyjną. Prawdziwego modelu nie próbowałem (darmowy limit skończył się na maszynie testowej) |
+| Codex | zweryfikowany na Codex 0.172.0 ze skryptowym modelem: serwer MCP jest zarejestrowany, instrukcja dociera, `run_plan` i `run_status` działają bez monitów o zgodę, a testy workera trafiają na gałąź integracyjną. Prawdziwego modelu OpenAI nie próbowałem (brak logowania), patrz [MCP](https://developers.openai.com/codex/mcp) i [konfiguracja](https://developers.openai.com/codex/config-reference) |
 
 ## Interfejs
 
@@ -194,14 +194,15 @@ Stack: [Model Context Protocol](https://modelcontextprotocol.io) (FastMCP), [Age
 - Planista Claude (`claude -p`) zwraca poprawny DAG, a worker go realizuje end-to-end.
 - `orch` przez prawdziwy Claude Code w tmux: 3 równoległe zadania, TUI na żywo, diff zrecenzowany przez Claude'a, 17 testów zielonych na gałęzi integracyjnej.
 - Zupełnie bez Claude'a (`claude` poza PATH): `orch` otwiera samo TUI, role planner i reviewer przechodzą na Command Code, cel wpisany w **▶ Plan** rozbity na 4 zadania i wszystkie 4 scalone, testy zielone.
-- OpenCode łączy się z serwerem MCP `orchestra`.
+- OpenCode i Codex 0.172.0 przez `orch`, każdy ze skryptowym lokalnym modelem i prawdziwym workerem Command Code: wywołane `run_plan` i `run_status`, zadanie scalone, testy zielone.
 
 **Zweryfikowane testami** (mocki i zanonimizowane nagrania): parser NDJSON `cmd` i `claude`, kody wyjścia, doctor, walidacja DAG-a, scheduler (równoległość, scalanie, bramka testów, eskalacja, budżet, konflikt scalenia, błąd krytyczny, anulowanie, wskazówki), `cwd` zadania, serwer MCP, klient ACP, TUI (przyciski, okna dialogowe, przekazywanie wiadomości z limitem).
 
 **Niezweryfikowane:**
 - Runda recenzji na prawdziwym Claude (`review_rounds`): tylko mocki.
-- `codex`, `codex-acp` i `agy`: brak binarek, checki są pomijane. Podpięcie launchera dla Codex ma tylko testy jednostkowe.
-- OpenCode jako model sterujący albo worker: darmowy limit skończył się na maszynie testowej.
+- `codex`, `codex-acp` i `agy`: brak binarek, checki są pomijane. 
+- Prawdziwy model za OpenCode albo Codex: przebiegi end-to-end szły ze skryptowym lokalnym modelem, więc nie wiadomo, czy prawdziwy model sam wybierze `run_plan`.
+- OpenCode jako worker: darmowy limit skończył się na maszynie testowej.
 - Koszt w USD workera: `cmd` go nie raportuje, więc kolumna `$` dla niego jest zerowa.
 - Interaktywna sesja Claude Code wołająca `run_plan` na dużym, prawdziwym repozytorium.
 

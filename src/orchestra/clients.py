@@ -74,7 +74,9 @@ def build_launch(client: str, repo: str | Path, config: str | Path, skill: str, 
         env = ", ".join(f"{k}={json.dumps(v)}" for k, v in _server_env(repo, config).items())
         first = ("Na razie nic nie rób, potwierdź jednym zdaniem. Zapamiętaj instrukcję na kolejne zadania:\n\n" + instructions)
         return Launch(["codex", "-c", f"mcp_servers.orchestra.command={json.dumps(_server_cmd())}",
-                       "-c", "mcp_servers.orchestra.args=[]", "-c", f"mcp_servers.orchestra.env={{{env}}}", *extra, first])
+                       "-c", "mcp_servers.orchestra.args=[]", "-c", f"mcp_servers.orchestra.env={{{env}}}",
+                       # bez tego Codex pyta o zgodę przy każdym wywołaniu run_plan i run_status
+                       "-c", 'mcp_servers.orchestra.default_tools_approval_mode="approve"', *extra, first])
     raise ValueError(f"Nieznany klient: {client}")
 
 

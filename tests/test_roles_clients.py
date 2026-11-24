@@ -162,6 +162,7 @@ def test_build_launch_per_client(tmp_path):
     joined = " ".join(x.argv)
     assert "mcp_servers.orchestra.command=" in joined and "mcp_servers.orchestra.env={ORCHESTRA_REPO=" in joined
     assert x.argv[0] == "codex" and "SKILL" in x.argv[-1]
+    assert 'mcp_servers.orchestra.default_tools_approval_mode="approve"' in x.argv
     with pytest.raises(ValueError):
         build_launch("emacs", repo, cfg, "S")
 
@@ -219,7 +220,8 @@ async def test_tui_runs_plan_file_with_custom_scripted_worker(git_repo):
         await wait_for(pilot, lambda: bool(app.screen.query("#plan-file-ok")))
         assert app.screen.query_one("#plan-file", Input).value == "plan.json"
         await pilot.click("#plan-file-ok")
-        await wait_for(pilot, lambda: any(e.kind == "run_end" for e in store.events(limit=1000)), timeout=60)
+        # czekamy na stan w aplikacji (TUI odczytuje log cyklicznie), a nie tylko na zdarzenie w bazie
+        await wait_for(pilot, lambda: (r := app._latest_run()) is not None and r.finished, timeout=60)
         run = app._latest_run()
         assert run is not None and run.tasks["hello"].status == "done"
     branch = subprocess.run(["git", "branch", "--list", "orchestra/run-*"], cwd=git_repo, capture_output=True, text=True).stdout

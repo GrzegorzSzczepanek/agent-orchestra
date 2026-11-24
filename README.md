@@ -91,8 +91,8 @@ implementer = "mycli"
 | --- | --- |
 | Claude Code | verified end to end (run, TUI, review of the diff) |
 | none (TUI only) | verified end to end with a Command Code planner and workers, with `claude` missing from PATH |
-| OpenCode | the MCP server connects (`opencode mcp list`), calling the tools with a model not verified (the free quota ran out on the test machine) |
-| Codex | wiring written from the [MCP](https://developers.openai.com/codex/mcp) and [config](https://developers.openai.com/codex/config-reference) docs, covered by unit tests only, no binary to run it |
+| OpenCode | verified with a scripted model: the MCP server connects, the instructions arrive, `run_plan` and `run_status` run without approval prompts and a worker's tests land on the integration branch. A real model was not tried (the free quota ran out on the test machine) |
+| Codex | verified with Codex 0.172.0 and a scripted model: the MCP server is registered, the instructions arrive, `run_plan` and `run_status` run without approval prompts and a worker's tests land on the integration branch. A real OpenAI model was not tried (no login), see [MCP](https://developers.openai.com/codex/mcp) and [config](https://developers.openai.com/codex/config-reference) |
 
 ## Interface
 
@@ -196,14 +196,15 @@ Stack: [Model Context Protocol](https://modelcontextprotocol.io) (FastMCP), [Age
 - The Claude planner (`claude -p`) returns a valid DAG and the worker carries it out end to end.
 - `orch` through a real Claude Code in tmux: 3 parallel tasks, TUI live, diff reviewed by Claude, 17 tests green on the integration branch.
 - No Claude at all (`claude` missing from PATH): `orch` opens the TUI alone, the planner and reviewer roles fall back to Command Code, a goal typed into **▶ Plan** is split into 4 tasks and all 4 are merged, tests green.
-- OpenCode connects to the `orchestra` MCP server.
+- OpenCode and Codex 0.172.0 through `orch`, each with a scripted local model and a real Command Code worker: `run_plan` and `run_status` called, task merged, tests green.
 
 **Verified by tests** (mocks and anonymised recordings): the `cmd` and `claude` NDJSON parser, exit codes, doctor, DAG validation, the scheduler (parallelism, merging, test gate, escalation, budget, merge conflict, fatal error, cancellation, hints), task `cwd`, the MCP server, the ACP client, the TUI (buttons, dialogs, capped message relaying).
 
 **Not verified:**
 - The review round on a real Claude (`review_rounds`): mocks only.
-- `codex`, `codex-acp` and `agy`: no binaries, the checks are skipped. The Codex launcher wiring has unit tests only.
-- OpenCode as a controlling model or as a worker: its free quota ran out on the test machine.
+- `codex`, `codex-acp` and `agy`: no binaries, the checks are skipped. 
+- A real model behind OpenCode or Codex: the end-to-end runs used a scripted local model, so whether a real model chooses `run_plan` on its own is untested.
+- OpenCode as a worker: its free quota ran out on the test machine.
 - Worker cost in USD: `cmd` does not report it, so the `$` column is zero for it.
 - An interactive Claude Code session calling `run_plan` on a large, real repository.
 
