@@ -1,7 +1,10 @@
 [project]
 name = "agent-orchestra"
 version = "0.1.0"
-description = "Orkiestrator agentów kodujących z hierarchią kosztową (ACP, MCP, Textual)"
+description = "Cost-aware orchestrator for coding agents (ACP, MCP, Textual)"
+license = "MIT"
+license-files = ["LICENSE"]
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "agent-client-protocol>=1.0",

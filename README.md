@@ -1,175 +1,183 @@
 # agent-orchestra
 
-**Mocny model planuje i recenzuje, tanie modele implementują. Ty widzisz wszystko na żywo i możesz wtrącić się w każdej chwili.**
+**English** | [Polski](README.pl.md)
 
-Orkiestrator agentów kodujących z hierarchią kosztową. Claude Code rozbija trudne zadanie na małe, testowalne części, a tani worker ([Command Code](https://commandcode.ai), model np. DeepSeek) wykonuje je równolegle w izolowanych git worktree. Zadanie trafia do wspólnej gałęzi dopiero po zielonym teście. Całość oglądasz w terminalowym interfejsie, w którym klikasz zamiast uczyć się komend.
+**A strong model plans and reviews, cheap models implement. You see everything live and can step in at any moment.**
 
-![Przegląd TUI: tabela zadań, kroki workera na żywo, przyciski](docs/tui-overview.png)
+A cost-aware orchestrator for coding agents. Claude Code breaks a hard task into small, testable pieces, and a cheap worker ([Command Code](https://commandcode.ai), with a model such as DeepSeek) executes them in parallel in isolated git worktrees. A task lands on the shared branch only after its test passes. You watch the whole thing in a terminal UI where you click instead of learning commands.
 
-## Po co
+![TUI overview: task table, live worker steps, buttons](docs/tui-overview.png)
 
-- **Taniej.** Planowanie, projektowanie i recenzja zostają przy mocnym modelu, a żmudna implementacja idzie do modelu około 20 razy tańszego za token.
-- **Bezpieczniej.** Każdy worker pracuje w osobnym worktree, a `main` nie jest ruszany. Zmiany wracają na gałąź `orchestra/run-<id>`, którą recenzujesz i scalasz sam.
-- **Widocznie.** Zadania, kroki workerów (komendy, zapisy plików, wyniki testów), tokeny i rozmowy agentów są w jednym oknie.
-- **Sterowalnie.** Możesz dać workerowi wskazówkę, anulować przebieg, dodać nowego agenta, napisać do działającego agenta albo obejrzeć diff.
+> The interface strings are in Polish. The screenshots show a made-up demo run.
 
-## Jak to działa
+## Why
+
+- **Cheaper.** Planning, design and review stay with the strong model, while the tedious implementation goes to a model roughly 20 times cheaper per token.
+- **Safer.** Every worker runs in its own worktree and `main` is never touched. Changes come back on an `orchestra/run-<id>` branch that you review and merge yourself.
+- **Visible.** Tasks, worker steps (commands, file writes, test results), tokens and agent conversations are all in one window.
+- **Steerable.** You can give a worker a hint, cancel a run, add a new agent, message a running agent or inspect a diff.
+
+## How it works
 
 ```mermaid
 flowchart LR
-    U([Ty]) --> C[Claude Code]
+    U([You]) --> C[Claude Code]
     C -- "run_plan (MCP)" --> S[Scheduler]
-    S --> W1[worker w worktree A]
-    S --> W2[worker w worktree B]
-    W1 -- "test_cmd zielony" --> I[(gałąź orchestra/run-id)]
-    W2 -- "test_cmd zielony" --> I
-    I -- "diff do recenzji" --> C
-    S -. zdarzenia .-> DB[(SQLite WAL)]
+    S --> W1[worker in worktree A]
+    S --> W2[worker in worktree B]
+    W1 -- "test_cmd green" --> I[(branch orchestra/run-id)]
+    W2 -- "test_cmd green" --> I
+    I -- "diff to review" --> C
+    S -. events .-> DB[(SQLite WAL)]
     DB -.-> T[TUI]
-    T -. "wskazówki, anulowanie, wiadomości" .-> DB
+    T -. "hints, cancel, messages" .-> DB
 ```
 
-1. Prosisz Claude'a o duże zadanie. Skill `orchestrate-hard-task` każe mu rozbić je na 3 do 8 zadań z opisem, plikami, kryteriami, komendą testową (`test_cmd`), katalogiem (`cwd`) i zależnościami.
-2. `run_plan` startuje w tle. Zadania bez zależności idą równolegle (1 do 3), każde w świeżym worktree odgałęzionym od gałęzi integracyjnej.
-3. Po zielonym `test_cmd` zadanie jest scalane (`--no-ff`) do gałęzi `orchestra/run-<id>`. Zadania zależne widzą kod swoich zależności.
-4. Zadania, których worker nie rozwiązał, wracają do Claude'a. Diff całego przebiegu recenzuje Claude, a scala Ty.
+1. You ask Claude for a big task. The `orchestrate-hard-task` skill tells it to split the work into 3 to 8 tasks, each with a description, files, acceptance criteria, a test command (`test_cmd`), a working directory (`cwd`) and dependencies.
+2. `run_plan` starts in the background. Tasks without dependencies run in parallel (1 to 3), each in a fresh worktree branched from the integration branch.
+3. When `test_cmd` is green, the task is merged (`--no-ff`) into the `orchestra/run-<id>` branch. Dependent tasks see the code of their dependencies.
+4. Tasks the worker could not solve go back to Claude. Claude reviews the diff of the whole run, and you do the final merge.
 
-## Szybki start
+## Quick start
 
-Wymagania: Python 3.11+, Node 22+, git, [Claude Code](https://claude.com/claude-code), `command-code` (`npm i -g command-code`). Opcjonalnie tmux (launcher `orch` sam otwiera w nim dwa panele).
+Requirements: Python 3.11+, Node 22+, git, [Claude Code](https://claude.com/claude-code), `command-code` (`npm i -g command-code`). Optionally tmux (the `orch` launcher opens two panes in it).
 
 ```bash
 git clone https://github.com/GrzegorzSzczepanek/agent-orchestra
 cd agent-orchestra
-scripts/setup.sh                 # .venv, instalacja, diagnostyka (pyta o npm i -g command-code)
-cmd login                        # ręcznie: otwiera przeglądarkę (na serwerze: export COMMAND_CODE_API_KEY=...)
-.venv/bin/orchestra doctor       # powinno być bez FAIL
+scripts/setup.sh                 # .venv, install, diagnostics (asks about npm i -g command-code)
+cmd login                        # manual: opens a browser (on a server: export COMMAND_CODE_API_KEY=...)
+.venv/bin/orchestra doctor       # should report no FAIL
 ```
 
-Globalny launcher, który działa z dowolnego repozytorium git:
+A global launcher that works from any git repository:
 
 ```bash
 mkdir -p ~/.local/bin && ln -sf "$PWD/scripts/orch" ~/.local/bin/orch
-cd ~/jakies/repo && orch
+cd ~/some/repo && orch
 ```
 
-`orch` otwiera w jednym oknie Claude'a z podpiętym serwerem `orchestra` (lewy panel) oraz TUI (prawy panel). Nic nie trzeba rejestrować globalnie: serwer MCP jest podawany przez `--mcp-config`. Potem napisz do Claude'a, np.:
+`orch` opens Claude with the `orchestra` server attached (left pane) and the TUI (right pane) in one window. Nothing needs to be registered globally: the MCP server is passed through `--mcp-config`. Then ask Claude, for example:
 
-> Użyj orchestrate-hard-task. Dopisz testy jednostkowe do modułów w `src/`, które ich nie mają. Rozbij to na zadania i rozdaj workerom.
+> Use orchestrate-hard-task. Add unit tests for the modules in `src/` that have none. Split it into tasks and hand them to the workers.
 
-Model workera: `default_model` w `agents.toml` (domyślnie `deepseek/deepseek-v4.1-flash`), zmienna `ORCHESTRA_CMD_MODEL` ma pierwszeństwo. Lista modeli: `cmd --list-models`.
+Worker model: `default_model` in `agents.toml` (default `deepseek/deepseek-v4.1-flash`), the `ORCHESTRA_CMD_MODEL` variable takes precedence. List models with `cmd --list-models`.
 
-> **Node.** `cmd` i adapter ACP wymagają Node 22 lub nowszego. `orchestra`, `orchestra-mcp` i `orchestra-tui` same dopisują do PATH Node 22+ z nvm, gdy domyślny jest starszy albo `cmd` nie jest w PATH.
+> **Node.** `cmd` and the ACP adapter require Node 22 or newer. `orchestra`, `orchestra-mcp` and `orchestra-tui` prepend a Node 22+ from nvm to PATH on their own when the default Node is older or `cmd` is not on PATH.
 
-## Interfejs
+## Interface
 
-Wszystko jest widoczne od razu, a każda akcja ma przycisk i F-klawisz (skróty tekstowe `/hint`, `/detail`, `/cancel`, `/msg` istnieją, ale nie są potrzebne).
+Everything is visible at once, and every action has both a button and a function key (the text shortcuts `/hint`, `/detail`, `/cancel` and `/msg` exist, but you do not need them).
 
-| Przycisk | Klawisz | Co robi |
+| Button | Key | What it does |
 | --- | --- | --- |
-| ＋ Agent | Ctrl+N | nowa sesja agenta dowolnego typu z `agents.toml`, we własnym worktree |
-| ✉ Wiadomość | F3 | wiadomość do działającego agenta, dociera jako jego kolejny prompt |
-| ✎ Wskazówka | F4 | tekst dołączany do następnej próby workera wybranego zadania |
-| 🔎 Szczegóły | F5 | błąd, `test_cmd`, pełny wynik testów i pliki ostatniej próby |
-| ⛔ Anuluj przebieg | F6 | zabija pracujące workery i kończy przebieg (z potwierdzeniem) |
-| ± Diff | F2 | diff worktree zaznaczonego agenta |
+| ＋ Agent | Ctrl+N | new agent session of any type from `agents.toml`, in its own worktree |
+| ✉ Wiadomość (message) | F3 | message to a running agent, delivered as its next prompt |
+| ✎ Wskazówka (hint) | F4 | text appended to the next attempt of the chosen task's worker |
+| 🔎 Szczegóły (details) | F5 | error, `test_cmd`, full test output and files of the last attempt |
+| ⛔ Anuluj przebieg (cancel run) | F6 | kills the working workers and ends the run (with confirmation) |
+| ± Diff | F2 | diff of the selected agent's worktree |
 
-Zaznacz wiersz po lewej, a pole tekstowe zmienia znaczenie: dla agenta to prompt, dla zadania to wskazówka (podpowiedź pod logiem mówi, co się stanie).
+Select a row on the left and the text field changes meaning: for an agent it is a prompt, for a task it is a hint (the line under the log tells you what will happen).
 
-Gdy próba workera nie przechodzi testów, widać przyczynę, a nie tylko status:
+When a worker attempt fails its tests, you see the cause, not just a status:
 
-![Nieudana próba z wynikiem testów](docs/tui-failure.png)
+![A failed attempt with its test output](docs/tui-failure.png)
 
-Rozmowy agentów i uwagi recenzenta są w wierszu `✉ wiadomości`. Nowego agenta dodajesz z listy, bez wpisywania komend:
+Agent conversations and reviewer remarks are in the `✉ wiadomości` (messages) row. You add a new agent from a list, without typing commands:
 
-![Rozmowy agentów i okno nowego agenta](docs/tui-new-agent.png)
+![Agent conversations and the new agent dialog](docs/tui-new-agent.png)
 
-Do samego podglądu zadań, bez promptów, jest osobny, lekki widok `orchestra watch` (albo `orch --simple-watch`):
+For just watching tasks, without prompts, there is a lightweight view, `orchestra watch` (or `orch --simple-watch`):
 
 ![orchestra watch](docs/watch.png)
 
-## Agenci rozmawiają ze sobą
+## Agents talk to each other
 
-Każdy agent startowany z TUI dostaje przez `session/new` podpięty serwer MCP `orchestra` z narzędziami `post_message`, `read_inbox` i `list_agents`. Wiadomość do działającego agenta (od Ciebie albo od innego agenta) trafia do niego jako kolejny prompt z instrukcją, jak odpowiedzieć. Po 10 wiadomościach agentów z rzędu bez Ciebie przekazywanie jest wstrzymywane, żeby rozmowa nie zapętliła się i nie paliła tokenów.
+Every agent started from the TUI gets the `orchestra` MCP server attached through `session/new`, with the tools `post_message`, `read_inbox` and `list_agents`. A message to a running agent (from you or from another agent) reaches it as its next prompt, with an instruction on how to reply. After 10 agent-to-agent messages in a row without you, relaying pauses so the conversation cannot loop and burn tokens.
 
-Workery z `run_plan` to jednorazowe wywołania `cmd -p`, więc nie rozmawiają w trakcie pracy. Mogą dostać wskazówkę przed następną próbą, a opcjonalna runda recenzji (`review_rounds`) odsyła do nich uwagi recenzenta.
+Workers from `run_plan` are one-shot `cmd -p` calls, so they do not converse while working. They can receive a hint before the next attempt, and the optional review round (`review_rounds`) sends the reviewer's remarks back to them.
 
-## Narzędzia MCP
+## MCP tools
 
-| Narzędzie | Opis |
+| Tool | Description |
 | --- | --- |
-| `run_plan(goal, tasks, parallel, review_rounds, ...)` | wykonuje plan zadań (DAG) workerami w tle, zwraca `run_id` od razu |
-| `run_status(run_id, wait_s)` | stan zadań, po zakończeniu raport i gałąź `orchestra/run-<id>` do recenzji |
-| `delegate(prompt, test_cmd, ...)` | pojedyncze proste zadanie w osobnym worktree z diffem i wynikiem testów |
-| `post_message`, `read_inbox`, `list_agents` | skrzynka wiadomości między agentami |
+| `run_plan(goal, tasks, parallel, review_rounds, ...)` | runs a task plan (DAG) with workers in the background, returns a `run_id` immediately |
+| `run_status(run_id, wait_s)` | task states, and after completion a report and the `orchestra/run-<id>` branch to review |
+| `delegate(prompt, test_cmd, ...)` | a single simple task in its own worktree, with a diff and test result |
+| `post_message`, `read_inbox`, `list_agents` | message inbox between agents |
 
-Zadanie w `run_plan`: `id`, `description`, `files`, `acceptance`, `test_cmd` (komenda bez powłoki, np. `pytest -q tests/test_x.py`), `cwd` (podkatalog repo, w którym działa worker i test), `difficulty` (`easy`, `medium`, `hard`), `depends_on`. Workery startują z zacommitowanego `HEAD`, więc niezacommitowane zmiany są dla nich niewidoczne (launcher `orch` ostrzega o nich).
+A `run_plan` task has: `id`, `description`, `files`, `acceptance`, `test_cmd` (a command without a shell, e.g. `pytest -q tests/test_x.py`), `cwd` (a repo subdirectory where the worker and the test run), `difficulty` (`easy`, `medium`, `hard`), `depends_on`. Workers start from the committed `HEAD`, so uncommitted changes are invisible to them (the `orch` launcher warns about them).
 
-## Hierarchia kosztowa i zabezpieczenia
+## Cost hierarchy and safeguards
 
-- **Bramka testów:** `test_cmd` musi przejść, zanim gałąź zadania zostanie scalona. Konflikt scalenia liczy się jak porażka.
-- **Eskalacja:** po 2 kolejnych porażkach taniego workera zadanie dostaje jedną próbę od roli `planner` (w CLI `orchestra run`). W `run_plan` z Claude Code eskalacja jest wyłączona: nieudane zadanie wraca do Claude'a.
-- **Budżet:** limit tokenów (domyślnie 400 tys.) i opcjonalnie kosztu na zadanie, liczone z logu SQLite.
-- **Błędy krytyczne** (zła konfiguracja, brak logowania, brak kredytów) kończą zadanie bez ponawiania i zatrzymują resztę przebiegu.
-- **Recenzent:** `review_rounds` 1 do 2 po zielonych testach. Badania nad debatą wieloagentową dają mieszane wyniki i wyższy koszt, więc domyślnie jest wyłączona.
-- **Środowisko:** worker `cmd` dostaje `--yolo`, bo izolacją jest worktree. Nie uruchamiaj go na repozytorium z sekretami, których worker nie powinien widzieć. SDK ACP przekazuje agentom okrojone środowisko, sekrety trzeba wymienić jawnie w `env_passthrough`.
+- **Test gate:** `test_cmd` must pass before a task branch is merged. A merge conflict counts as a failure.
+- **Escalation:** after 2 consecutive failures of the cheap worker, the task gets one attempt from the `planner` role (in the `orchestra run` CLI). In `run_plan` from Claude Code, escalation is off: a failed task goes back to Claude.
+- **Budget:** a token limit (default 400k) and optionally a cost limit per task, computed from the SQLite log.
+- **Fatal errors** (bad configuration, not logged in, no credits) end the task without retries and stop the rest of the run.
+- **Reviewer:** `review_rounds` 1 to 2 after green tests. Research on multi-agent debate gives mixed results at a higher cost, so it is off by default.
+- **Environment:** the `cmd` worker gets `--yolo`, because the worktree is the isolation. Do not run it on a repository with secrets the worker should not see. The ACP SDK passes agents a trimmed environment, so secrets must be listed explicitly in `env_passthrough`.
 
-Realny koszt: pojedyncza próba workera w prawdziwych zadaniach zużywa rzędu 50 do 170 tys. tokenów wejścia (głównie kontekst i cache), a stały narzut `cmd -p` to około 15 tys. tokenów. Opłaca się to dla zadań z jasnym testem i 1 do 3 plikami, a nie dla jednolinijkowych poprawek.
+Real cost: a single worker attempt on real tasks uses on the order of 50 to 170k input tokens (mostly context and cache), and the fixed overhead of `cmd -p` is about 15k tokens. It pays off for tasks with a clear test and 1 to 3 files, not for one-line fixes.
 
-## Konfiguracja i CLI
+## Configuration and CLI
 
-`agents.toml` opisuje agentów (komenda ACP, komenda headless, `env_passthrough`, model, poziom kosztowy) i role (`planner`, `reviewer`, `implementer`). Wbudowani: Claude Code (przez adapter ACP), Command Code, Codex, Antigravity, OpenCode.
+`agents.toml` describes the agents (ACP command, headless command, `env_passthrough`, model, cost tier) and roles (`planner`, `reviewer`, `implementer`). Built in: Claude Code (through an ACP adapter), Command Code, Codex, Antigravity, OpenCode.
 
 ```
-orchestra doctor [--smoke] [--model ID]        diagnostyka: cmd, logowanie, modele, headless, ACP, inni agenci
-orchestra plan "cel" [--out plan.json]         rola planner układa DAG zadań w JSON
+orchestra doctor [--smoke] [--model ID]        diagnostics: cmd, login, models, headless, ACP, other agents
+orchestra plan "goal" [--out plan.json]        the planner role produces a task DAG as JSON
 orchestra run plan.json [--parallel 2] [--rounds 0] [--token-budget 400000]
-orchestra watch [--repo .]                     podgląd przebiegów na żywo (tylko odczyt)
-orchestra-tui --repo . --agents commandcode    TUI (--demo pokazuje agenty mock)
-orchestra-mcp                                  serwer MCP (stdio)
-orch [KATALOG] [--agents a,b] [--no-watch]     Claude Code + TUI w jednym oknie
-scripts/go.sh "cel" [--claude] [--plan-only]   plan i wykonanie jednym poleceniem, bez Claude Code
+orchestra watch [--repo .]                     live view of runs (read only)
+orchestra-tui --repo . --agents commandcode    TUI (--demo shows mock agents)
+orchestra-mcp                                  MCP server (stdio)
+orch [DIR] [--agents a,b] [--no-watch]         Claude Code + TUI in one window
+scripts/go.sh "goal" [--claude] [--plan-only]  plan and run in one command, without Claude Code
 ```
 
-## Struktura
+## Layout
 
 ```
-agents.toml           agenci, role, model workera
-.mcp.json             serwer MCP dla Claude Code uruchomionego w tym repo
-.agents/skills/       skille (orchestrate-hard-task, delegate-simple-tasks), .claude/skills to symlink
+agents.toml           agents, roles, worker model
+.mcp.json             MCP server for Claude Code started in this repo
+.agents/skills/       skills (orchestrate-hard-task, delegate-simple-tasks), .claude/skills is a symlink
 src/orchestra/        scheduler, plan (DAG, pydantic), delegate, worktree, mcp_server, acp_client,
                       controller, store (SQLite WAL), progress, tui, watch, doctor, node_env, cli
-scripts/              setup.sh, orch, go.sh, make_screenshot.py (zrzuty do README)
-tests/                pytest, w tym zanonimizowane fixture'y z prawdziwego wyjścia cmd i claude
+scripts/              setup.sh, orch, go.sh, make_screenshot.py (README screenshots)
+tests/                pytest, including anonymised fixtures from real cmd and claude output
 ```
 
-Stack: [Model Context Protocol](https://modelcontextprotocol.io) (FastMCP), [Agent Client Protocol](https://agentclientprotocol.com) (oficjalne SDK), Textual, pydantic, `graphlib`, SQLite.
+Stack: [Model Context Protocol](https://modelcontextprotocol.io) (FastMCP), [Agent Client Protocol](https://agentclientprotocol.com) (official SDK), Textual, pydantic, `graphlib`, SQLite.
 
-## Testy i stan weryfikacji
+## Tests and verification status
 
 ```bash
-.venv/bin/pytest        # 107 testów
+.venv/bin/pytest        # 107 tests
 ```
 
-**Zweryfikowane na prawdziwym środowisku** (macOS, Node 22, `cmd` 1.93.2, `claude` 2.1.x):
-- `orchestra doctor`: logowanie, lista modeli, headless, ACP `initialize` i `session/new`.
-- `run_plan` i `run_status` przez prawdziwy serwer MCP (stdio) z workerem `cmd`: 3 zadania, jedno zależne od dwóch pozostałych, wszystkie scalone, testy na gałęzi integracyjnej zielone.
-- Podpięcie serwera `orchestra` do sesji `cmd acp`: agent sam wywołał `list_agents` i `post_message`.
-- Planista Claude (`claude -p`) zwraca poprawny DAG, a worker go realizuje end-to-end.
+**Verified on a real environment** (macOS, Node 22, `cmd` 1.93.2, `claude` 2.1.x):
+- `orchestra doctor`: login, model list, headless, ACP `initialize` and `session/new`.
+- `run_plan` and `run_status` through a real MCP server (stdio) with a `cmd` worker: 3 tasks, one depending on the other two, all merged, tests green on the integration branch.
+- Attaching the `orchestra` server to a `cmd acp` session: the agent called `list_agents` and `post_message` on its own.
+- The Claude planner (`claude -p`) returns a valid DAG and the worker carries it out end to end.
 
-**Zweryfikowane testami** (mocki i zanonimizowane nagrania): parser NDJSON `cmd` i `claude`, kody wyjścia, doctor, walidacja DAG-a, scheduler (równoległość, scalanie, bramka testów, eskalacja, budżet, konflikt scalenia, błąd krytyczny, anulowanie, wskazówki), `cwd` zadania, serwer MCP, klient ACP, TUI (przyciski, okna dialogowe, przekazywanie wiadomości z limitem).
+**Verified by tests** (mocks and anonymised recordings): the `cmd` and `claude` NDJSON parser, exit codes, doctor, DAG validation, the scheduler (parallelism, merging, test gate, escalation, budget, merge conflict, fatal error, cancellation, hints), task `cwd`, the MCP server, the ACP client, the TUI (buttons, dialogs, capped message relaying).
 
-**Niezweryfikowane:**
-- Runda recenzji na prawdziwym Claude (`review_rounds`): tylko mocki.
-- `codex`, `codex-acp` i `agy`: brak binarek, checki są pomijane.
-- Koszt w USD workera: `cmd` go nie raportuje, więc kolumna `$` dla niego jest zerowa.
-- Interaktywna sesja Claude Code wołająca `run_plan` na dużym, prawdziwym repozytorium.
+**Not verified:**
+- The review round on a real Claude (`review_rounds`): mocks only.
+- `codex`, `codex-acp` and `agy`: no binaries, the checks are skipped.
+- Worker cost in USD: `cmd` does not report it, so the `$` column is zero for it.
+- An interactive Claude Code session calling `run_plan` on a large, real repository.
 
-## Ograniczenia i pomysły
+## Limitations and ideas
 
-- Workery `run_plan` nie mają podpiętego MCP, więc nie konsultują się w trakcie pracy (wymagałoby przejścia z `cmd -p` na sesje ACP).
-- Anulowanie przebiegu zostawia worktree do posprzątania: `git worktree prune`, a gałęzie `orchestra/*` usuń po scaleniu.
-- Brak ponawiania pojedynczego zadania z TUI (na razie wskazówka i ponowienie przez Claude'a).
-- Koszt w USD liczony z cennika modeli, sandbox Docker dla trybu YOLO, kontynuacja pracy w tym samym worktree po uwagach recenzenta.
+- `run_plan` workers have no MCP attached, so they do not consult each other mid-task (that would require moving from `cmd -p` to ACP sessions).
+- Cancelling a run leaves worktrees to clean up: `git worktree prune`, and delete the `orchestra/*` branches after merging.
+- No retry of a single task from the TUI yet (for now a hint, and Claude re-runs it).
+- USD cost computed from model price lists, a Docker sandbox for YOLO mode, continuing work in the same worktree after reviewer remarks.
 
-Uruchamianie niezmodyfikowanego `claude` na własnym koncie jest zgodne z dokumentacją Anthropic według autora, ale regulamin się zmienia, więc sprawdź aktualny przed użyciem w produkcji.
+Running an unmodified `claude` on your own account is, in the author's reading, consistent with Anthropic's documentation, but the terms change, so check the current ones before using this in production.
+
+## License
+
+[MIT](LICENSE)
