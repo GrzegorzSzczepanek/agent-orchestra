@@ -181,7 +181,12 @@ async def _diagnose_crash(binary: str, out: str, err: str, timeout: float) -> tu
                 f"przełącz Node (np. `nvm use {need}`) albo zainstaluj pakiet pod nowszym Node")
     lines = [l.strip() for l in (err or out).splitlines() if l.strip()]
     err_line = next((l for l in reversed(lines) if re.match(r"^\w*Error\b", l)), "")
-    return (f"{binary} nie startuje ({(err_line or 'nieznany błąd')[:160]}), Node {node or '?'}",
+    if not err_line:
+        # Node obcina stderr do ok. 64 KB przy zamknięciu potoku, więc stack trace po długiej linii cli.mjs ginie
+        why = "brak pola engines w zainstalowanym pakiecie" if not engines else f"engines {engines}"
+        return (f"{binary} nie startuje pod Node {node or '?'} ({why}, komunikat błędu obcięty)",
+                "aktualny command-code wymaga Node >=22: `nvm use 22` albo `npm i -g command-code@latest` pod Node 22")
+    return (f"{binary} nie startuje ({err_line[:160]}), Node {node or '?'}",
             "uruchom `cmd --version` ręcznie i sprawdź wersję Node względem engines pakietu")
 
 

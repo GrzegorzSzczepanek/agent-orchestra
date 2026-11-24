@@ -210,3 +210,16 @@ async def test_doctor_cmd_crash_with_ok_node_shows_error_line_not_stacktrace(tmp
     b = by_name(rep)["cmd: binarka"]
     assert b.status == FAIL
     assert "SyntaxError" in b.detail and "import*as" not in b.detail and len(b.detail) < 260
+
+
+async def test_doctor_cmd_crash_without_engines_and_truncated_stderr(tmp_path, monkeypatch):
+    """Realny przypadek: stary pakiet bez engines, stderr obcięty przez Node przy zamykaniu potoku."""
+    _crashing_cmd(tmp_path, monkeypatch, "v20.19.5", engines="")
+    pkg = tmp_path / "lib" / "command-code"
+    (pkg / "package.json").write_text(json.dumps({"name": "command-code", "version": "0.52.5"}))
+    cli = pkg / "dist" / "cli.mjs"
+    cli.write_text(CRASH_CLI.split("sys.stderr.write(\"SyntaxError")[0])  # bez linii błędu
+    rep = await run_doctor(load_config(ROOT / "agents.toml"), timeout=10, others=False)
+    b = by_name(rep)["cmd: binarka"]
+    assert b.status == FAIL and "Node v20.19.5" in b.detail and "import*as" not in b.detail
+    assert "Node >=22" in b.hint
