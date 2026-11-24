@@ -93,14 +93,25 @@ Patch:
 Reply with exactly `APPROVE` if it is correct and minimal, otherwise `CHANGES: ` followed by concrete, short remarks."""
 
 
+def parse_verdict(reply: str) -> Verdict:
+    """APPROVE na początku albo na końcu odpowiedzi to zatwierdzenie (modele lubią dopisać wstęp przed werdyktem).
+
+    Wystąpienie `CHANGES:` wygrywa: wszystko po nim to uwagi. Brak werdyktu liczy się jako uwagi.
+    """
+    lines = [ln.strip(" \t*`_.!") for ln in reply.splitlines() if ln.strip()]
+    idx = reply.upper().find("CHANGES:")
+    if idx >= 0:
+        return Verdict(False, reply[idx + len("CHANGES:"):].strip() or reply)
+    if lines and (lines[0].upper().startswith("APPROVE") or lines[-1].upper().endswith("APPROVE")):
+        return Verdict(True)
+    return Verdict(False, reply)
+
+
 def make_reviewer(ask: Ask) -> Callable[[PlanTask, DelegateResult], Awaitable[Verdict]]:
     async def review(task: PlanTask, result: DelegateResult) -> Verdict:
         prompt = REVIEW_PROMPT.format(id=task.id, description=task.description,
                                       acceptance="\n".join(f"- {a}" for a in task.acceptance),
                                       diff=result.diff[-12000:])
-        reply = (await ask(prompt)).strip()
-        if reply.upper().startswith("APPROVE"):
-            return Verdict(True)
-        return Verdict(False, reply.removeprefix("CHANGES:").strip() or reply)
+        return parse_verdict((await ask(prompt)).strip())
 
     return review

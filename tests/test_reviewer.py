@@ -87,3 +87,15 @@ def test_long_diff_is_truncated_to_last_12000_chars():
     assert start_marker not in prompt
     # ostatnie 12000 znaków diffu jest w promptcie w całości
     assert diff[-12000:] in prompt
+
+
+def test_parse_verdict_accepts_approve_after_preamble_and_changes_wins():
+    from orchestra.agents_io import parse_verdict
+
+    assert parse_verdict("APPROVE").approved
+    assert parse_verdict("approve, wygląda dobrze").approved
+    assert parse_verdict("Sprawdzam statycznie, każda asercja pasuje.\n\n**APPROVE**").approved  # wstęp przed werdyktem
+    v = parse_verdict("Wstęp.\nCHANGES: dodaj test dla pustej listy")
+    assert not v.approved and v.feedback == "dodaj test dla pustej listy"
+    assert not parse_verdict("CHANGES: APPROVE po poprawkach").approved
+    assert not parse_verdict("Nie jestem pewien.").approved
