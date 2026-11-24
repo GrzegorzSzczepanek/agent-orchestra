@@ -12,6 +12,7 @@ from fastmcp import FastMCP
 from .config import Config, load_config
 from .delegate import delegate as run_delegate
 from .plan import Plan, PlanTask
+from .agents_io import headless_ask, make_reviewer
 from .progress import build_runs
 from .scheduler import RunOptions, RunReport, Scheduler
 from .store import EventStore
@@ -22,6 +23,7 @@ def build_server(config: Config | None = None, repo: str | Path | None = None) -
     cfg = config or load_config(os.environ.get("ORCHESTRA_CONFIG", "agents.toml"))
     default_repo = Path(repo or os.environ.get("ORCHESTRA_REPO", ".")).resolve()
     store = EventStore(os.environ.get("ORCHESTRA_DB", default_repo / ".orchestra" / "events.db"))
+    me = os.environ.get("ORCHESTRA_AGENT", "")  # nazwa agenta, któremu serwer jest podpięty (ustawia TUI)
 
     @mcp.tool
     async def delegate(
@@ -71,6 +73,7 @@ def build_server(config: Config | None = None, repo: str | Path | None = None) -
         model: str = "",
         token_budget: int = 400_000,
         timeout_s: float = 900,
+        review_rounds: int = 0,
     ) -> dict[str, Any]:
         """Wykonuje plan zadań (DAG) tanimi workerami w tle i od razu zwraca run_id.
 
@@ -81,12 +84,16 @@ def build_server(config: Config | None = None, repo: str | Path | None = None) -
         Każde zadanie działa w osobnym worktree odgałęzionym od HEAD (zmiany niezacommitowane
         są niewidoczne dla workerów), przechodzi bramkę test_cmd i dopiero wtedy jest scalane
         do gałęzi integracyjnej orchestra/run-<id>. Zadania, których worker nie rozwiązał, wracają
-        do Ciebie (status failed) i robisz je sam. Postęp: run_status albo `orchestra watch` w terminalu.
+        do Ciebie (status failed) i robisz je sam.
+        review_rounds 1 do 2: po zielonych testach rola reviewer ocenia diff, uwagi wracają do workera (kosztuje
+        zużycie roli reviewer, domyślnie Claude). Rozmowa recenzenta z workerem jest widoczna w wierszu inbox TUI. Postęp: run_status albo `orchestra watch` w terminalu.
         """
         plan = Plan(goal=goal, tasks=tasks)
-        sched = Scheduler(cfg, default_repo, store,
-                          RunOptions(parallel=parallel, escalate=False, worker=worker, model=model,
-                                     token_budget=token_budget, timeout_s=timeout_s))
+        opts = RunOptions(parallel=parallel, escalate=False, worker=worker, model=model,
+                          token_budget=token_budget, timeout_s=timeout_s, discussion_rounds=review_rounds)
+        reviewer = (make_reviewer(headless_ask(cfg, "reviewer", default_repo, store=store))
+                    if opts.discussion_rounds else None)
+        sched = Scheduler(cfg, default_repo, store, opts, reviewer=reviewer)
         runs[sched.run_id] = (sched, asyncio.create_task(sched.run(plan)))
         return {"run_id": sched.run_id, "tasks": [t.id for t in plan.tasks], "order": plan.order(),
                 "next": "wywołaj run_status(run_id, wait_s=60) aż finished=true"}
@@ -116,14 +123,23 @@ def build_server(config: Config | None = None, repo: str | Path | None = None) -
         return out
 
     @mcp.tool
-    def post_message(from_agent: str, to_agent: str, body: str, thread: str = "") -> int:
-        """Wysyła wiadomość do innego agenta (wspólna skrzynka w SQLite). Zwraca id wiadomości."""
-        return store.post_message(from_agent, to_agent, body, thread)
+    def post_message(to_agent: str, body: str, from_agent: str = "", thread: str = "") -> int:
+        """Wysyła wiadomość do innego agenta (np. do agenta z TUI). Adresat dostaje ją jako kolejny prompt.
+
+        from_agent domyślnie jest Twoją nazwą. Zwraca id wiadomości. Nazwy agentów: list_agents.
+        """
+        return store.post_message(from_agent or me or "agent", to_agent, body, thread)
 
     @mcp.tool
-    def read_inbox(agent: str, since_id: int = 0, thread: str | None = None) -> list[dict[str, Any]]:
-        """Czyta wiadomości adresowane do agenta, nowsze niż since_id."""
-        return [m.__dict__ for m in store.inbox(agent, since_id, thread)]
+    def read_inbox(agent: str = "", since_id: int = 0, thread: str | None = None) -> list[dict[str, Any]]:
+        """Czyta wiadomości adresowane do agenta (domyślnie do Ciebie), nowsze niż since_id."""
+        return [m.__dict__ for m in store.inbox(agent or me, since_id, thread)]
+
+    @mcp.tool
+    def list_agents() -> dict[str, Any]:
+        """Lista agentów widocznych w logu (nazwy do post_message) i nazwa Twojego agenta."""
+        names = [a for a in store.agents() if not a.startswith(("worker:", "role:", "task:", "scheduler", "inbox"))]
+        return {"me": me, "agents": names}
 
     return mcp
 

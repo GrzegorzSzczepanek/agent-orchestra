@@ -149,7 +149,16 @@ class EventStore:
                 "INSERT INTO messages(ts, from_agent, to_agent, thread, body) VALUES (?,?,?,?,?)",
                 (time.time(), from_agent, to_agent, thread, body),
             )
-            return int(cur.lastrowid)
+            mid = int(cur.lastrowid)
+        # widoczność w TUI: wiadomości (poza sterującymi run:/task:) pokazują się w wierszu "inbox"
+        if not to_agent.startswith(("run:", "task:")):
+            self.add_event("inbox", "message", {"from": from_agent, "to": to_agent, "thread": thread, "body": body})
+        return mid
+
+    def messages(self, since_id: int = 0, limit: int = 200) -> list[Message]:
+        with self._lock:
+            rows = self._db.execute("SELECT * FROM messages WHERE id > ? ORDER BY id LIMIT ?", (since_id, limit)).fetchall()
+        return [Message(r["id"], r["ts"], r["from_agent"], r["to_agent"], r["thread"], r["body"]) for r in rows]
 
     def inbox(self, to_agent: str, since_id: int = 0, thread: str | None = None) -> list[Message]:
         sql, args = "SELECT * FROM messages WHERE to_agent = ? AND id > ?", [to_agent, since_id]

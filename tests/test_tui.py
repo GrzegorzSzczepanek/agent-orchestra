@@ -180,3 +180,103 @@ async def test_new_agent_from_tui(store: EventStore, git_repo: Path):
         app.query_one("#prompt", Input).value = "napisz coś"
         await pilot.press("enter")
         await wait_for(pilot, lambda: "napisz coś" in log_text(app))
+
+
+# --- interfejs bez uczenia się komend: tabela zadań, przyciski, wiadomości agent <-> agent ---
+from textual.widgets import Select  # noqa: E402
+
+from orchestra.tui import ConfirmScreen, MessageScreen, TaskActionScreen  # noqa: E402
+
+
+def seed_run(store: EventStore) -> None:
+    store.add_event("scheduler", "run_start", {
+        "run_id": "r1", "goal": "g", "tasks": 2, "parallel": 2, "integration_branch": "orchestra/run-r1",
+        "plan": [{"id": "a", "difficulty": "easy", "depends_on": [], "description": "A"},
+                 {"id": "b", "difficulty": "easy", "depends_on": ["a"], "description": "B"}]})
+    store.add_event("scheduler", "task_start", {"run_id": "r1", "task_id": "a"})
+    store.add_event("task:a", "worker_step", {"run_id": "r1", "task_id": "a", "step": "tool", "text": "write_file: a.py",
+                                              "attempt": 1, "worker": "cheap"})
+
+
+async def test_tasks_visible_immediately_with_live_steps(store: EventStore):
+    seed_run(store)
+    app = OrchestraApp(store, poll_s=0.05)
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause(0.3)
+        t = app.query_one("#agents", DataTable)
+        keys = [k.value for k in t.rows]
+        assert "task:a" in keys and "task:b" in keys and "scheduler" in keys
+        assert not any(k.startswith(("worker:", "role:")) for k in keys)
+        assert t.get_cell("task:a", "status").endswith("working") and t.get_cell("task:b", "status").endswith("pending")
+        assert "przebieg r1" in app.sub_title
+        app.select_agent("task:a")
+        assert "write_file: a.py" in log_text(app)
+        # nowy krok workera pojawia się na żywo w otwartym zadaniu
+        store.add_event("task:a", "worker_step", {"run_id": "r1", "task_id": "a", "step": "result", "text": "created",
+                                                  "attempt": 1, "worker": "cheap"})
+        await wait_for(pilot, lambda: "created" in log_text(app))
+
+
+async def test_text_on_task_row_is_hint_and_buttons_open_dialogs(store: EventStore):
+    seed_run(store)
+    app = OrchestraApp(store, poll_s=0.05)
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause(0.3)
+        assert {b.id for b in app.query("#toolbar Button")} >= {"b-new", "b-msg", "b-hint", "b-detail", "b-cancel", "b-diff"}
+        app.select_agent("task:b")
+        assert "Wskazówka dla zadania b" in app._prompt.placeholder
+        app._prompt.focus()
+        app._prompt.value = "użyj foo"
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        assert store.inbox("task:r1:b")[0].body == "użyj foo"
+        await pilot.click("#b-hint")
+        await pilot.pause(0.2)
+        assert isinstance(app.screen, TaskActionScreen)
+        assert app.screen.query_one("#act-task", Select).value == "b"  # zaznaczone zadanie jest domyślne
+        await pilot.press("escape")
+        await pilot.click("#b-cancel")
+        await pilot.pause(0.2)
+        assert isinstance(app.screen, ConfirmScreen)
+        await pilot.click("#yes")
+        await pilot.pause(0.2)
+        assert store.inbox("run:r1")[0].body == "cancel"
+
+
+async def test_message_button_reaches_live_agent_and_agents_talk(store: EventStore, tmp_path: Path):
+    specs = []
+    for name in ("alpha", "beta"):
+        d = tmp_path / name
+        d.mkdir()
+        specs.append(AgentSpec(name, MOCK, str(d)))
+    app = OrchestraApp(store, Controller(store, specs), poll_s=0.05)
+    async with app.run_test(size=(140, 40)) as pilot:
+        await wait_for(pilot, lambda: len(app.controller.sessions) == 2)
+        app.select_agent("beta")
+        await pilot.click("#b-msg")
+        await pilot.pause(0.2)
+        assert isinstance(app.screen, MessageScreen)
+        assert app.screen.query_one("#msg-to", Select).value == "beta"
+        app.screen.query_one("#msg-text", Input).value = "cześć"
+        await pilot.click("#msg-ok")
+        await wait_for(pilot, lambda: "Wiadomość od user: cześć" in log_text(app))
+        # agent -> agent (tak działa post_message z narzędzia MCP): adresat dostaje to jako prompt
+        store.post_message("beta", "alpha", "odpowiedź od bety")
+        app.select_agent("alpha")
+        await wait_for(pilot, lambda: "Wiadomość od beta: odpowiedź od bety" in log_text(app))
+        # rozmowa jest widoczna w wierszu wiadomości
+        assert "inbox" in [k.value for k in app.query_one("#agents", DataTable).rows]
+
+
+async def test_agent_to_agent_relay_is_capped(store: EventStore, tmp_path: Path):
+    d = tmp_path / "a"
+    d.mkdir()
+    app = OrchestraApp(store, Controller(store, [AgentSpec("alpha", MOCK, str(d))]), poll_s=0.05)
+    async with app.run_test(size=(140, 40)) as pilot:
+        await wait_for(pilot, lambda: "alpha" in app.controller.sessions)
+        for i in range(15):
+            store.post_message("beta", "alpha", f"ping{i}")
+        await pilot.pause(0.5)
+        app.select_agent("alpha")
+        text = log_text(app)
+        assert "ping9" in text and "ping10" not in text  # po MAX_RELAY człowiek musi się odezwać

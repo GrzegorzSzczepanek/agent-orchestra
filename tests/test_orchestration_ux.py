@@ -279,8 +279,26 @@ async def test_tui_commands(git_repo: Path):
         await pilot.pause(0.2)
         tui.run_command("/hint b sprawdź import")
         tui.run_command("/detail b")
-        tui.run_command("/cancel")
+        tui._do_cancel("r1")
         await pilot.pause(0.1)
         assert store.inbox("task:r1:b")[0].body == "sprawdź import"
         assert store.inbox("run:r1")[0].body == "cancel"
         assert "E assert 1 == 2" in "\n".join(l.text for l in tui._log.lines)
+
+
+async def test_run_plan_with_reviewer_round_is_visible_in_inbox(git_repo: Path, tmp_path: Path):
+    worker, rev = tmp_path / "worker.py", tmp_path / "rev.py"
+    worker.write_text(WORKER)
+    rev.write_text("import json\nprint(json.dumps({'type': 'result', 'subtype': 'success', 'usage': {}, 'finalText': 'APPROVE'}))\n")
+    cfg = Config(agents={"cheap": AgentConfig(name="cheap", headless=(sys.executable, str(worker), "{task}")),
+                         "rev": AgentConfig(name="rev", headless=(sys.executable, str(rev), "{task}"))},
+                 roles={"implementer": "cheap", "reviewer": "rev"})
+    server = build_server(config=cfg, repo=git_repo)
+    async with Client(server) as client:
+        started = (await client.call_tool("run_plan", {"goal": "g", "tasks": [tdict("a")], "review_rounds": 1})).data
+        status = (await client.call_tool("run_status", {"run_id": started["run_id"], "wait_s": 60})).data
+    assert status["ok"], status
+    store = EventStore(git_repo / ".orchestra" / "events.db")
+    msgs = store.events(agent="inbox", kind="message")
+    assert [(e.payload["from"], e.payload["to"], e.payload["body"]) for e in msgs] == [("reviewer", "implementer:a", "APPROVE")]
+    assert "reviewer" in fmt_event(msgs[0]).plain

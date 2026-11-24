@@ -8,7 +8,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Sequence
 
-from acp.schema import McpServerStdio
+import os
+import sys
+
+from acp.schema import EnvVariable, McpServerStdio
 
 from .acp_client import AgentSession, PermissionHandler, reject_all
 from .config import Config
@@ -25,13 +28,27 @@ class AgentSpec:
     env: dict[str, str] = field(default_factory=dict)
 
 
-async def specs_from_config(config: Config, repo: str | Path, names: Sequence[str]) -> list[AgentSpec]:
-    """Dla każdego agenta z konfiguracji tworzy worktree i zwraca specyfikację sesji ACP."""
+def orchestra_mcp_server(agent_name: str, repo: str | Path, config_path: str | Path, db_path: str | Path) -> McpServerStdio:
+    """Serwer MCP orchestra podpinany do sesji ACP: agent dostaje post_message, read_inbox, list_agents itd."""
+    env = {"ORCHESTRA_REPO": str(repo), "ORCHESTRA_CONFIG": str(config_path), "ORCHESTRA_DB": str(db_path),
+           "ORCHESTRA_AGENT": agent_name, "PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", "")}
+    return McpServerStdio(name="orchestra", command=str(Path(sys.executable).parent / "orchestra-mcp"), args=[],
+                          env=[EnvVariable(name=k, value=v) for k, v in env.items()])
+
+
+async def specs_from_config(config: Config, repo: str | Path, names: Sequence[str], *,
+                            config_path: str | Path | None = None, db_path: str | Path | None = None) -> list[AgentSpec]:
+    """Dla każdego agenta z konfiguracji tworzy worktree i zwraca specyfikację sesji ACP.
+
+    Z config_path i db_path agent dostaje podpięty serwer MCP orchestra (komunikacja z innymi agentami).
+    """
     specs = []
     for name in names:
         agent = config.agents[name]
         wt = await create_worktree(repo, name=name)
-        specs.append(AgentSpec(name, agent.acp, str(wt.path), env=agent.acp_env()))
+        mcp = (orchestra_mcp_server(name, repo, config_path, db_path or Path(repo) / ".orchestra" / "events.db"),) \
+            if config_path else ()
+        specs.append(AgentSpec(name, agent.acp, str(wt.path), mcp_servers=mcp, env=agent.acp_env()))
     return specs
 
 

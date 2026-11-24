@@ -47,6 +47,8 @@ def fmt_event(ev: Event) -> Text | None:
         case "worker_end":
             ok = p.get("status") == "ok"
             return Text(f"{clock} ■ próba {p.get('attempt')}: {p.get('status')}", style="green" if ok else "red")
+        case "message":
+            return Text(f"{clock} ✉ {p.get('from')} → {p.get('to')}: {p.get('body', '')[:400]}", style="bold blue")
         case "hint_applied":
             return Text(f"{clock} ✎ wskazówka dla {p.get('task_id')}: {p.get('text', '')}", style="bold magenta")
         case "run_cancel":

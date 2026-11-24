@@ -35,9 +35,14 @@ W katalogu repo jest `.mcp.json` i `.claude/settings.json`, więc po `scripts/se
 
 Skille `orchestrate-hard-task` (rozbijanie i rozdawanie) i `delegate-simple-tasks` mówią Claude'owi, kiedy i jak z tego korzystać. Przykład: napisz w Claude Code "rozbij to na zadania i rozdaj workerom: ...".
 
-**Interaktywne TUI:** `orch` (globalny launcher, `scripts/orch`, symlink do `~/.local/bin/orch`) otwiera Claude'a i `orchestra-tui` obok siebie w jednym oknie (poza tmux sam startuje sesję tmux z dwoma panelami, myszka działa, wyjście z Claude'a zamyka sesję): tabela agentów, strumień wybranego agenta, prompt do niego, `Ctrl+N` dodaje nowego agenta w własnym worktree (dowolny typ z `agents.toml`, z nazwą), `F2` diff, okno zgód. Zdarzenia `run_plan` (zadania, próby, workery) są w tym samym logu i pokazują się jako wiersze `scheduler` i `worker:*`.
+**Interaktywne TUI (bez uczenia się komend):** `orch` (globalny launcher, `scripts/orch`) otwiera Claude'a i `orchestra-tui` obok siebie w jednym oknie (poza tmux sam startuje sesję tmux z dwoma panelami, myszka działa, wyjście z Claude'a zamyka sesję). Wszystko jest widoczne od razu:
 
-**Podgląd i wpływ na przebieg w TUI:** każde zadanie z `run_plan` ma własny wiersz `task:<id>` z wywołaniami narzędzi workera na żywo (komendy, zapisy plików, wyniki, odpowiedź), a nieudana próba pokazuje przyczynę i końcówkę wyniku testów. W polu promptu: `/detail <zadanie>` (błąd, test_cmd, pełny wynik testów, pliki ostatniej próby), `/hint <zadanie> <tekst>` (wskazówka dołączana do następnej próby workera), `/cancel` (zabija pracujące workery i kończy przebieg), `/help`. Zadanie w `run_plan` ma pole `cwd` (podkatalog repo, w którym działa worker i `test_cmd`, np. `code`).
+- **Tabela po lewej:** agenci (sesje ACP), przebieg zadań i wiadomości. Zadania z `run_plan` pojawiają się w tabeli od razu jako `○ pending`, potem `● working`, `✓ done`, `✗ failed` z licznikiem prób i tokenami. Zaznaczone zadanie pokazuje kroki workera na żywo (komendy, zapisy plików, wyniki), a nieudana próba pokazuje przyczynę i końcówkę wyniku testów.
+- **Przyciski u góry** (i te same F-klawisze): `＋ Agent` (Ctrl+N, nowy agent dowolnego typu z `agents.toml`, w własnym worktree), `✉ Wiadomość` (F3), `✎ Wskazówka` (F4, trafia do następnej próby workera), `🔎 Szczegóły` (F5, błąd, `test_cmd`, pełny wynik testów, pliki), `⛔ Anuluj przebieg` (F6, zabija pracujące workery), `± Diff` (F2). Pod logiem jest podpowiedź, co robi pole tekstowe dla zaznaczonego wiersza: dla agenta to prompt, dla zadania wskazówka. Skróty tekstowe `/hint`, `/detail`, `/cancel`, `/msg` robią to samo, ale nie są potrzebne.
+- **Komunikacja agent z agentem:** każdy agent startowany z TUI ma podpięty serwer MCP `orchestra` (`post_message`, `read_inbox`, `list_agents`, przez `session/new`), zweryfikowane na prawdziwym `cmd acp`. Wiadomość do działającego agenta (od Ciebie przyciskiem F3 albo od innego agenta) trafia do niego jako kolejny prompt z poleceniem, jak odpowiedzieć. Po 10 wiadomościach agentów z rzędu bez Ciebie przekazywanie się wstrzymuje. Cała rozmowa, razem z uwagami recenzenta, jest w wierszu `✉ wiadomości`.
+- **Recenzent:** `run_plan(..., review_rounds=1)` (1 do 2) po zielonych testach daje diff do oceny roli `reviewer` (domyślnie Claude, zużywa jego limit), a uwagi wracają do workera. Zweryfikowane tylko na mockach, nie na prawdziwym Claude.
+
+Zadanie w `run_plan` ma pole `cwd` (podkatalog repo, w którym działa worker i `test_cmd`, np. `code`).
 
 **Podgląd zadań na żywo (tylko odczyt):** `orch --simple-watch` albo w drugim terminalu `.venv/bin/orchestra watch` (albo `scripts/go.sh --watch`). Góra: tabela zadań (status, worker, próby, tokeny, zależności), dół: strumień zdarzeń. `n` przełącza przebieg, `q` wychodzi. Czyta wspólny log `.orchestra/events.db`, więc widzi też `delegate`.
 
@@ -76,7 +81,7 @@ src/orchestra/              commandcode, delegate, mcp_server, acp_client, store
                             agents_io, controller, tui, cli
 scripts/setup.sh            instalacja i diagnostyka
 scripts/go.sh               plan i wykonanie zadania jednym poleceniem
-tests/                      pytest (102 testy), fixtures z prawdziwego wyjścia cmd 1.93.2 i claude 2.1.331
+tests/                      pytest (107 testów), fixtures z prawdziwego wyjścia cmd 1.93.2 i claude 2.1.331
 ```
 
 ## Narzut tokenów i próg delegowania
