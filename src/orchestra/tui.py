@@ -99,6 +99,9 @@ class OrchestraApp(App[None]):
         self._table = self.query_one("#agents", DataTable)
         self._log = self.query_one("#log", RichLog)
         self._diff = self.query_one("#diff", RichLog)
+        # Tab ma iść z tabeli prosto do promptu (logi przewijasz myszą), bez przystanku na RichLog
+        self._log.can_focus = False
+        self._diff.can_focus = False
         table = self._table
         for key, label in (("agent", "agent"), ("status", "status"), ("tin", "in"), ("tout", "out"), ("cost", "$")):
             table.add_column(label, key=key)

@@ -141,3 +141,14 @@ async def test_diff_view(store: EventStore, git_repo: Path):
         assert "new.txt" in log_text(app, "#diff")
         await pilot.press("f2")
         assert app.query_one("#diff").display is False
+
+
+async def test_single_tab_from_table_reaches_prompt(store: EventStore):
+    """Regresja z prawdziwego tmux: potrzeba było dwóch Tabów, bo fokus przystawał na RichLog."""
+    store.add_event("alpha", "agent_message", {"text": "x"})
+    app = OrchestraApp(store, poll_s=0.05)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        assert isinstance(app.focused, DataTable)
+        await pilot.press("tab")
+        assert isinstance(app.focused, Input)
