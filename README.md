@@ -8,7 +8,7 @@ Orkiestrator agentów kodujących z hierarchią kosztową. Mocny model (Claude) 
 2. **Logowanie (ręcznie):** `cmd login` (otwiera przeglądarkę). Na serwerze bez przeglądarki zamiast tego `export COMMAND_CODE_API_KEY=...`.
 3. **Model:** `cmd --list-models`, potem `export ORCHESTRA_CMD_MODEL=<id z listy>`, np. `deepseek/deepseek-v4.1-flash`. Pełne ID albo część po ostatnim `/` (`glm-5.3-flash`), wielkość liter nie ma znaczenia. Bez modelu worker zwraca jasny błąd konfiguracji.
 4. **Test na żywo:** `.venv/bin/orchestra doctor --smoke` (jedno zapytanie, zużywa kilka groszy kredytów). Wklej zawartość `orchestra-doctor.json` do rozmowy z Claude: raport nie zawiera sekretów (maskowane są `COMMAND_CODE_API_KEY`, tokeny i wzorce kluczy), więc dopasuję parser i konfigurację do tego, co faktycznie zwraca Twoje konto.
-5. **Praca:** albo zarejestruj narzędzie `delegate` w Claude Code (niżej), albo użyj `orchestra plan` i `orchestra run`.
+5. **Praca:** najprościej `scripts/go.sh "cel zadania"` (plan i wykonanie jednym poleceniem). Alternatywnie zarejestruj narzędzie `delegate` w Claude Code (niżej) albo użyj `orchestra plan` i `orchestra run`.
 
 ## Polecenia
 
@@ -18,7 +18,11 @@ orchestra plan "cel" [--via headless|acp] [--out plan.json]            # planner
 orchestra run plan.json [--parallel 2] [--rounds 0] [--max-failures 2] [--token-budget 400000]
 orchestra-tui --repo . --agents claude,commandcode                     # TUI (Textual); --demo pokazuje agenty mock
 orchestra-mcp                                                          # serwer MCP z narzędziem delegate
+
+scripts/go.sh "cel" [--repo KAT] [--parallel N] [--claude] [--plan-only] [--tui]   # plan i wykonanie jednym poleceniem
 ```
+
+`scripts/go.sh` domyślnie planuje tanim `commandcode`, więc działa także wtedy, gdy Claude ma wyczerpany limit. Dodaj `--claude`, żeby planował Claude. `--tui` otwiera TUI, `--plan-only` zatrzymuje się po planie. Model workera bierze z `ORCHESTRA_CMD_MODEL`, a gdy zmienna jest pusta, ustawia `deepseek/deepseek-v4.1-flash`.
 
 Rejestracja serwera MCP w Claude Code (Claude planuje i recenzuje, a proste zadania oddaje workerowi):
 
@@ -52,6 +56,7 @@ AGENTS.md, CLAUDE.md        wspólne instrukcje (CLAUDE.md importuje @AGENTS.md)
 src/orchestra/              commandcode, delegate, mcp_server, acp_client, store, doctor, plan, scheduler,
                             agents_io, controller, tui, cli
 scripts/setup.sh            instalacja i diagnostyka
+scripts/go.sh               plan i wykonanie zadania jednym poleceniem
 tests/                      pytest (84 testy), fixtures z prawdziwego wyjścia cmd 1.93.2 i claude 2.1.331
 ```
 
