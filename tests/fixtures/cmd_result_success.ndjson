@@ -1,0 +1,12 @@
+{"type":"event","event":{"type":"run_start","sessionId":"00000000-0000-0000-0000-000000000000"}}
+{"type":"event","event":{"type":"turn_start","turnNumber":1}}
+{"type":"event","event":{"type":"message_start"}}
+{"type":"event","event":{"type":"model_request_start","model":"deepseek/deepseek-v4.1-flash"}}
+{"type":"event","event":{"type":"model_trace","traceId":"00000000000000000000000000000000"}}
+{"type":"event","event":{"type":"text_delta","delta":"ok"}}
+{"type":"event","event":{"type":"message_update","content":[{"type":"text","text":"ok"}]}}
+{"type":"event","event":{"type":"model_request_end","model":"deepseek/deepseek-v4.1-flash","usage":{"inputTokens":13857,"outputTokens":3,"cacheReadTokens":6016,"cacheWriteTokens":0},"stopReason":"stop"}}
+{"type":"event","event":{"type":"message_end","content":[{"type":"text","text":"ok"}]}}
+{"type":"event","event":{"type":"turn_end","turnNumber":1,"hadToolCalls":false,"usage":{"inputTokens":13857,"outputTokens":3,"cacheReadTokens":6016,"cacheWriteTokens":0}}}
+{"type":"event","event":{"type":"run_end","result":{"finalText":"ok","stopReason":"end_turn","turnCount":1,"usage":{"inputTokens":13857,"outputTokens":3,"cacheReadTokens":6016,"cacheWriteTokens":0},"systemPromptTokens":null}}}
+{"type":"result","subtype":"success","sessionId":"00000000-0000-0000-0000-000000000000","stopReason":"end_turn","usage":{"inputTokens":13857,"outputTokens":3,"cacheReadTokens":6016,"cacheWriteTokens":0},"durationMs":3102,"finalText":"ok"}

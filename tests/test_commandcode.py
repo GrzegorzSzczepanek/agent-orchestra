@@ -25,6 +25,17 @@ def test_parse_real_unauth_result_line():
     assert r.usage == {"tokens_in": 0, "tokens_out": 0, "cache_read": 0, "cache_write": 0}
 
 
+def test_parse_real_cmd_success_ndjson():
+    """Prawdziwy sukces cmd 1.93.2 (zanonimizowany): 11 ramek event i końcowa linia result."""
+    r = parse_headless_output((FIX / "cmd_result_success.ndjson").read_text())
+    assert r.found_result and r.subtype == "success" and r.final_text == "ok"
+    assert r.events == 11 and r.parse_errors == 0
+    assert r.session_id == "00000000-0000-0000-0000-000000000000"
+    assert r.stop_reason == "end_turn"
+    assert r.usage == {"tokens_in": 13857, "tokens_out": 3, "cache_read": 6016, "cache_write": 0}
+    assert r.cost_usd == 0.0  # cmd nie raportuje kosztu
+
+
 def test_parse_success_with_events_unknown_frames_and_garbage():
     out = "\n".join([
         "log nie json",
