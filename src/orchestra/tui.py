@@ -155,8 +155,14 @@ class OrchestraApp(App[None]):
     def submit_prompt(self, event: Input.Submitted) -> None:
         text = event.value.strip()
         event.input.value = ""
-        if text and self.selected and self.controller is not None:
-            self.run_worker(self.controller.send(self.selected, text), exclusive=False)
+        if not text or self.controller is None:
+            return
+        if not self.selected:  # prompt przed pierwszym poll: nie gub tekstu, wybierz pierwszego agenta
+            agents = self.store.agents()
+            if not agents:
+                return
+            self.select_agent(agents[0])
+        self.run_worker(self.controller.send(self.selected, text), exclusive=False)
 
     # --- diff ---
     async def action_toggle_diff(self) -> None:

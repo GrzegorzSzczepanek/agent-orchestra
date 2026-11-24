@@ -84,6 +84,21 @@ async def test_prompt_roundtrip_with_mock_agents(store: EventStore, tmp_path: Pa
         assert t.get_cell("beta", "tin") == "0"  # drugi agent nie dostał promptu
 
 
+async def test_prompt_without_selection_uses_first_agent(store: EventStore, tmp_path: Path):
+    """Prompt wysłany zanim poll ustawi selected nie może zginąć."""
+    d = tmp_path / "alpha"
+    d.mkdir()
+    app = OrchestraApp(store, Controller(store, [AgentSpec("alpha", MOCK, str(d))]), poll_s=0.05)
+    async with app.run_test(size=(120, 36)) as pilot:
+        await wait_for(pilot, lambda: len(app.controller.sessions) == 1)
+        app.selected = ""
+        app.query_one("#prompt", Input).value = "hej"
+        app.query_one("#prompt", Input).focus()
+        await pilot.press("enter")
+        assert app.selected == "alpha"
+        await wait_for(pilot, lambda: "echo: hej" in log_text(app))
+
+
 async def test_permission_modal_allows_write(store: EventStore, tmp_path: Path):
     d = tmp_path / "wt"
     d.mkdir()
