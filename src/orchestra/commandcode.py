@@ -192,3 +192,43 @@ def mask_secrets(text: str, env: Mapping[str, str] | None = None) -> str:
         else:
             text = pat.sub("***", text)
     return text
+
+
+def _short(value: Any, limit: int = 160) -> str:
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def summarize_frame(line: str) -> tuple[str, str] | None:
+    """Skrót ramki NDJSON z `cmd -p` do podglądu na żywo: (rodzaj, tekst) albo None dla szumu.
+
+    Rodzaje: tool (wywołanie narzędzia), result (wynik narzędzia), text (odpowiedź), think (rozumowanie).
+    Ramki znane z cmd 1.93.2: tool_queued, tool_completed, message_end, thinking_end.
+    """
+    line = line.strip()
+    if not line.startswith("{"):
+        return None
+    try:
+        frame = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    ev = frame.get("event") if frame.get("type") == "event" else None
+    if not isinstance(ev, dict):
+        return None
+    t = ev.get("type")
+    if t == "tool_queued":
+        inp = ev.get("input") or {}
+        detail = inp.get("command") or inp.get("file_path") or inp.get("pattern") or inp.get("path") or inp
+        return "tool", f"{ev.get('toolName', '?')}: {_short(detail)}"
+    if t == "tool_completed":
+        res = ev.get("result")
+        text = " ".join(str(r.get("text", "")) for r in res if isinstance(r, dict)) if isinstance(res, list) else res
+        return "result", _short(text or "(brak wyniku)")
+    if t == "message_end":
+        parts = [c.get("text", "") for c in ev.get("content", []) if isinstance(c, dict) and c.get("type") == "text"]
+        text = " ".join(p for p in parts if p).strip()
+        return ("text", _short(text, 300)) if text else None
+    if t == "thinking_end":
+        return "think", _short(ev.get("text", ""), 200)
+    return None

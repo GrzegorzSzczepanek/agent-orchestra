@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Protocol
 
 from .config import Config
+from .commandcode import summarize_frame
 from .delegate import DelegateResult, delegate
 from .plan import Plan, PlanTask
 from .store import EventStore
@@ -157,6 +158,8 @@ class Scheduler:
         self._integ: Worktree | None = None
         self._abort = asyncio.Event()
         self._plan: Plan | None = None
+        self._attempt_no: dict[str, int] = {}
+        self._hint_cursor: dict[str, int] = {}
 
     # --- konfiguracja pomocnicza ---
     def _worker(self) -> str:
@@ -165,10 +168,44 @@ class Scheduler:
     def _strong(self) -> str:
         return self.config.roles.get(self.opt.escalate_role, "")
 
+    def _step_logger(self, task: PlanTask, worker: str) -> Callable[[str], None]:
+        """Linie stdout workera -> zdarzenia worker_step (agent task:<id>), widoczne na żywo w TUI."""
+        def log(line: str) -> None:
+            step = summarize_frame(line)
+            if step is not None:
+                self.store.add_event(f"task:{task.id}", "worker_step",
+                                     {"run_id": self.run_id, "task_id": task.id, "worker": worker,
+                                      "attempt": self._attempt_no.get(task.id, 1), "step": step[0], "text": step[1]})
+        return log
+
     async def _default_executor(self, task: PlanTask, prompt: str, worker: str, base: str) -> DelegateResult:
         return await delegate(self.config, self.repo, prompt, test_cmd=task.test_cmd, worker=worker,
                               model=self.opt.model if worker == self._worker() else "", base=base,
-                              timeout_s=self.opt.timeout_s, keep_worktree=True)
+                              timeout_s=self.opt.timeout_s, keep_worktree=True, cwd=task.cwd,
+                              on_line=self._step_logger(task, worker))
+
+    # --- sterowanie z TUI przez skrzynkę wiadomości ---
+    def _hints(self, task_id: str) -> str:
+        """Nowe wskazówki użytkownika dla zadania (wiadomości do task:<run>:<task>), każda raz."""
+        to = f"task:{self.run_id}:{task_id}"
+        new = self.store.inbox(to, self._hint_cursor.get(task_id, 0))
+        if new:
+            self._hint_cursor[task_id] = new[-1].id
+        return "\n".join(m.body for m in new)
+
+    async def _watch_control(self, running: dict[asyncio.Task[TaskOutcome], str]) -> None:
+        """Co sekundę sprawdza polecenie cancel dla przebiegu i zabija bieżące zadania."""
+        cursor = 0
+        while True:
+            await asyncio.sleep(1.0)
+            for m in self.store.inbox(f"run:{self.run_id}", cursor):
+                cursor = m.id
+                if m.body.strip().lower() == "cancel":
+                    self._abort.set()
+                    self._log("run_cancel", {"by": m.from_agent})
+                    for fut in list(running):
+                        fut.cancel()
+                    return
 
     def _log(self, kind: str, payload: dict[str, Any], **kw: Any) -> None:
         self.store.add_event("scheduler", kind, {"run_id": self.run_id, **payload}, **kw)
@@ -207,6 +244,7 @@ class Scheduler:
     async def _run_task(self, task: PlanTask) -> TaskOutcome:
         assert self._integ is not None
         out = TaskOutcome(id=task.id, status="failed")
+        self._log("task_start", {"task_id": task.id, "difficulty": task.difficulty})
         executor = self._executor or self._default_executor
         cheap, strong = self._worker(), self._strong()
         escalated = False
@@ -230,6 +268,11 @@ class Scheduler:
 
             worker = strong if tier_strong else cheap
             await self._cleanup(last)
+            hint = self._hints(task.id)
+            if hint:
+                feedback = (feedback + "\n" if feedback else "") + "Instruction from the user (follow it):\n" + hint
+                self._log("hint_applied", {"task_id": task.id, "text": hint[:300]})
+            self._attempt_no[task.id] = len(out.attempts) + 1
             res = await executor(task, build_prompt(task, feedback, prev_diff, escalated), worker, self._integ.branch)
             last = res
             tok_in, tok_out = int(res.usage.get("tokens_in", 0)), int(res.usage.get("tokens_out", 0))
@@ -239,8 +282,16 @@ class Scheduler:
                                  {"run_id": self.run_id, "task_id": task.id, "attempt": len(out.attempts),
                                   "status": res.status, "escalated": escalated,
                                   "cache_read": int(res.usage.get("cache_read", 0)),
-                                  "cache_write": int(res.usage.get("cache_write", 0))},
+                                  "cache_write": int(res.usage.get("cache_write", 0)),
+                                  "error": res.error[-800:], "test_cmd": res.test_cmd, "cwd": task.cwd,
+                                  "test_exit_code": res.test_exit_code, "test_output": res.test_output[-3000:],
+                                  "worker_text": res.worker_text[-1500:],
+                                  "files": sorted({ln.split(" b/")[-1] for ln in res.diff.splitlines()
+                                                   if ln.startswith("diff --git")})[:20]},
                                  tokens_in=tok_in, tokens_out=tok_out, cost=float(res.cost_usd))
+            self.store.add_event(f"task:{task.id}", "worker_end",
+                                 {"run_id": self.run_id, "task_id": task.id, "attempt": len(out.attempts),
+                                  "status": res.status})
 
             status, feedback, prev_diff = res.status, "", ""
             if status == "ok":
@@ -290,8 +341,10 @@ class Scheduler:
     async def run(self, plan: Plan) -> RunReport:
         self._plan = plan
         self._integ = await create_worktree(self.repo, name=f"run-{self.run_id}", base="HEAD")
-        self._log("run_start", {"tasks": len(plan.tasks), "parallel": self.opt.parallel,
-                                "integration_branch": self._integ.branch})
+        self._log("run_start", {"goal": plan.goal, "tasks": len(plan.tasks), "parallel": self.opt.parallel,
+                                "integration_branch": self._integ.branch,
+                                "plan": [{"id": t.id, "difficulty": t.difficulty, "depends_on": t.depends_on,
+                                          "description": t.description[:120]} for t in plan.tasks]})
         tasks = plan.by_id()
         ts = TopologicalSorter({t.id: set(t.depends_on) for t in plan.tasks})
         ts.prepare()
@@ -303,11 +356,14 @@ class Scheduler:
             async with sem:
                 return await self._run_task(t)
 
+        watcher = asyncio.create_task(self._watch_control(running))
         while ts.is_active():
             for tid in ts.get_ready():
                 bad = [d for d in tasks[tid].depends_on if outcomes[d].status != "done"]
                 if bad:
                     outcomes[tid] = TaskOutcome(tid, "blocked", error=f"zależność nie powiodła się: {', '.join(bad)}")
+                    self._log("task_end", {"task_id": tid, "status": "blocked", "attempts": 0, "escalated": False,
+                                           "tokens": 0})
                     ts.done(tid)
                 else:
                     running[asyncio.create_task(guarded(tasks[tid]))] = tid
@@ -318,9 +374,14 @@ class Scheduler:
                 tid = running.pop(fut)
                 try:
                     outcomes[tid] = fut.result()
+                except asyncio.CancelledError:
+                    outcomes[tid] = TaskOutcome(tid, "skipped", error="anulowano przez użytkownika")
+                    self._log("task_end", {"task_id": tid, "status": "skipped", "attempts": 0, "escalated": False,
+                                           "tokens": 0})
                 except Exception as exc:  # noqa: BLE001 - błąd jednego zadania nie zatrzymuje reszty planu
                     outcomes[tid] = TaskOutcome(tid, "failed", error=f"{type(exc).__name__}: {exc}")
                 ts.done(tid)
+        watcher.cancel()
 
         report = RunReport(self.run_id, self._integ.branch, {t.id: outcomes[t.id] for t in plan.tasks})
         try:  # katalog worktree gałęzi integracyjnej usuwamy, sama gałąź zostaje do przeglądu i scalenia

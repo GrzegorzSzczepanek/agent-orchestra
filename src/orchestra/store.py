@@ -99,11 +99,14 @@ class EventStore:
             )
             return int(cur.lastrowid)
 
-    def events(self, since_id: int = 0, agent: str | None = None, limit: int = 500) -> list[Event]:
+    def events(self, since_id: int = 0, agent: str | None = None, limit: int = 500, kind: str | None = None) -> list[Event]:
         sql, args = "SELECT * FROM events WHERE id > ?", [since_id]
         if agent:
             sql += " AND agent = ?"
             args.append(agent)
+        if kind:
+            sql += " AND kind = ?"
+            args.append(kind)
         sql += " ORDER BY id LIMIT ?"
         args.append(limit)
         with self._lock:

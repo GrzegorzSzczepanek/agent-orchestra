@@ -12,6 +12,8 @@ STATUS_BY_KIND = {
     "prompt_end": "idle",
     "permission_request": "waiting",
     "permission_response": "working",
+    "worker_step": "working",
+    "worker_end": "idle",
     "error": "error",
     "session_end": "stopped",
 }
@@ -74,7 +76,9 @@ def _render_one(ev: Event) -> Text | None:
         case "user_message" | "context" | "other":
             return None
         case _:
-            return Text(f"{ev.kind}: {p}", style="dim")
+            from .watch import fmt_event  # zdarzenia orkiestracji (run_plan, delegate) mają własny format
+
+            return fmt_event(ev) or Text(f"{ev.kind}: {p}", style="dim")
 
 
 def status_of(kind: str, current: str) -> str:

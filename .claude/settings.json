@@ -1,0 +1,7 @@
+{
+  "enabledMcpjsonServers": ["orchestra"],
+  "permissions": {
+    "allow": ["mcp__orchestra__delegate", "mcp__orchestra__run_plan", "mcp__orchestra__run_status",
+              "mcp__orchestra__post_message", "mcp__orchestra__read_inbox"]
+  }
+}

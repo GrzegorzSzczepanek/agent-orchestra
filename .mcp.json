@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "orchestra": {
+      "command": ".venv/bin/orchestra-mcp",
+      "args": [],
+      "env": {
+        "ORCHESTRA_REPO": ".",
+        "ORCHESTRA_CONFIG": "agents.toml"
+      }
+    }
+  }
+}

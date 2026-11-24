@@ -17,17 +17,36 @@ orchestra doctor [--smoke] [--model ID] [--no-others] [--json plik]   # diagnost
 orchestra plan "cel" [--via headless|acp] [--out plan.json]            # planner układa DAG zadań w JSON
 orchestra run plan.json [--parallel 2] [--rounds 0] [--max-failures 2] [--token-budget 400000]
 orchestra-tui --repo . --agents claude,commandcode                     # TUI (Textual); --demo pokazuje agenty mock
-orchestra-mcp                                                          # serwer MCP z narzędziem delegate
+orchestra-mcp                                                          # serwer MCP: delegate, run_plan, run_status
+orchestra watch [--repo .]                                             # podgląd przebiegów na żywo (TUI)
 
-scripts/go.sh "cel" [--repo KAT] [--parallel N] [--claude] [--plan-only] [--tui]   # plan i wykonanie jednym poleceniem
+scripts/go.sh "cel" [--repo KAT] [--parallel N] [--claude] [--plan-only] [--tui] [--watch]   # plan i wykonanie jednym poleceniem
 ```
 
 `scripts/go.sh` domyślnie planuje tanim `commandcode`, więc działa także wtedy, gdy Claude ma wyczerpany limit. Dodaj `--claude`, żeby planował Claude. `--tui` otwiera TUI, `--plan-only` zatrzymuje się po planie. Model workera bierze z `ORCHESTRA_CMD_MODEL`, a gdy zmienna jest pusta, ustawia `deepseek/deepseek-v4.1-flash`.
 
-Rejestracja serwera MCP w Claude Code (Claude planuje i recenzuje, a proste zadania oddaje workerowi):
+## Praca z Claude Code (główny scenariusz)
+
+W katalogu repo jest `.mcp.json` i `.claude/settings.json`, więc po `scripts/setup.sh` wystarczy uruchomić `claude` w tym katalogu: serwer `orchestra` jest włączony od razu. Narzędzia MCP:
+
+- `run_plan(goal, tasks)`: Claude rozbija trudne zadanie na małe (id, opis, pliki, kryteria, `test_cmd`, trudność, zależności), a tani worker wykonuje je równolegle w osobnych worktree z bramką testów. Zwraca `run_id` od razu, praca idzie w tle. Zadania nieudane wracają do Claude'a (bez eskalacji do `claude -p`).
+- `run_status(run_id, wait_s)`: stan zadań, a po zakończeniu raport i gałąź integracyjna `orchestra/run-<id>` do recenzji (`git diff HEAD...orchestra/run-<id>`).
+- `delegate`: pojedyncze proste zadanie, `post_message` i `read_inbox`: skrzynka między agentami.
+
+Skille `orchestrate-hard-task` (rozbijanie i rozdawanie) i `delegate-simple-tasks` mówią Claude'owi, kiedy i jak z tego korzystać. Przykład: napisz w Claude Code "rozbij to na zadania i rozdaj workerom: ...".
+
+**Interaktywne TUI:** `orch` (globalny launcher, `scripts/orch`, symlink do `~/.local/bin/orch`) otwiera Claude'a i `orchestra-tui` obok siebie w jednym oknie (poza tmux sam startuje sesję tmux z dwoma panelami, myszka działa, wyjście z Claude'a zamyka sesję): tabela agentów, strumień wybranego agenta, prompt do niego, `Ctrl+N` dodaje nowego agenta w własnym worktree (dowolny typ z `agents.toml`, z nazwą), `F2` diff, okno zgód. Zdarzenia `run_plan` (zadania, próby, workery) są w tym samym logu i pokazują się jako wiersze `scheduler` i `worker:*`.
+
+**Podgląd i wpływ na przebieg w TUI:** każde zadanie z `run_plan` ma własny wiersz `task:<id>` z wywołaniami narzędzi workera na żywo (komendy, zapisy plików, wyniki, odpowiedź), a nieudana próba pokazuje przyczynę i końcówkę wyniku testów. W polu promptu: `/detail <zadanie>` (błąd, test_cmd, pełny wynik testów, pliki ostatniej próby), `/hint <zadanie> <tekst>` (wskazówka dołączana do następnej próby workera), `/cancel` (zabija pracujące workery i kończy przebieg), `/help`. Zadanie w `run_plan` ma pole `cwd` (podkatalog repo, w którym działa worker i `test_cmd`, np. `code`).
+
+**Podgląd zadań na żywo (tylko odczyt):** `orch --simple-watch` albo w drugim terminalu `.venv/bin/orchestra watch` (albo `scripts/go.sh --watch`). Góra: tabela zadań (status, worker, próby, tokeny, zależności), dół: strumień zdarzeń. `n` przełącza przebieg, `q` wychodzi. Czyta wspólny log `.orchestra/events.db`, więc widzi też `delegate`.
+
+**Node:** `cmd` i adapter ACP wymagają Node >= 22. `orchestra`, `orchestra-mcp` i `orchestra-tui` same dopisują do PATH Node 22+ z nvm, gdy domyślny jest starszy albo `cmd` nie jest w PATH (`.nvmrc` zawiera 22). Model workera: `default_model` w `agents.toml` (`deepseek/deepseek-v4.1-flash`), zmienna `ORCHESTRA_CMD_MODEL` ma pierwszeństwo.
+
+Użycie w innym repozytorium (rejestracja globalna, ścieżki bezwzględne):
 
 ```
-claude mcp add orchestra -e ORCHESTRA_REPO=$PWD -e ORCHESTRA_CONFIG=$PWD/agents.toml -- $PWD/.venv/bin/orchestra-mcp
+claude mcp add orchestra -s user -e ORCHESTRA_REPO=. -e ORCHESTRA_CONFIG=$PWD/agents.toml -- $PWD/.venv/bin/orchestra-mcp
 ```
 
 ## Jak działa hierarchia kosztowa
@@ -57,7 +76,7 @@ src/orchestra/              commandcode, delegate, mcp_server, acp_client, store
                             agents_io, controller, tui, cli
 scripts/setup.sh            instalacja i diagnostyka
 scripts/go.sh               plan i wykonanie zadania jednym poleceniem
-tests/                      pytest (84 testy), fixtures z prawdziwego wyjścia cmd 1.93.2 i claude 2.1.331
+tests/                      pytest (102 testy), fixtures z prawdziwego wyjścia cmd 1.93.2 i claude 2.1.331
 ```
 
 ## Narzut tokenów i próg delegowania
@@ -81,6 +100,8 @@ tests/                      pytest (84 testy), fixtures z prawdziwego wyjścia c
 
 **Zweryfikowane testami (84, pytest)** na mockowych binarkach i agentach oraz na prawdziwych, zanonimizowanych fixture'ach: parser NDJSON (ramki event, wynik sukcesu i błędu, nieznane ramki, błędne linie, format `claude -p`, `is_error` przy `subtype: success`), mapowanie kodów wyjścia, wymóg modelu, doctor (PASS, FAIL, SKIP, WARN, crash Node, maskowanie sekretów), planista i walidacja DAG-a, scheduler (równoległość, scalanie do gałęzi integracyjnej, bramka testów, eskalacja, blokowanie zależnych, budżet tokenów, limit rund, konflikt scalenia, błąd krytyczny), CLI `plan` i `run` od końca do końca, logowanie zużycia ról, serwer MCP, klient ACP, TUI (Pilot).
 
+- `run_plan` i `run_status` przez prawdziwy serwer MCP (stdio) z workerem `cmd` (deepseek-v4.1-flash): 3 zadania, trzecie zależne od dwóch pierwszych, równolegle 2. Wszystkie `done`, gałąź integracyjna z 6 commitami, 5 testów zielonych (około 160 tys. tokenów wejścia). `claude mcp list` pokazuje `orchestra ✔ Connected`. Nie sprawdzone: wywołanie tych narzędzi przez Claude w sesji interaktywnej.
+
 **Niezweryfikowane**:
 - Rola recenzenta (`--rounds 1` lub więcej) na prawdziwym Claude: nie była uruchamiana. Planista przez `--via acp` (`claude-agent-acp`) też nie: sprawdzony jest tylko ACP initialize, a `plan` przeszedł przez `--via headless`.
 - Zadania wielokrokowe z zależnościami i równoległością na prawdziwych agentach: przetestowano jedno zadanie.
@@ -96,5 +117,4 @@ tests/                      pytest (84 testy), fixtures z prawdziwego wyjścia c
 - Kontynuacja pracy w tym samym worktree po uwagach recenzenta (teraz nowa próba startuje od czystego worktree z poprzednim patchem w prompcie).
 - Koszt w USD liczony z cennika modeli (teraz tylko z danych agenta).
 - Powtórzyć planowanie i recenzję przez Claude po podniesieniu limitu konta i dopisać zmierzony DAG do tabeli.
-- Podgląd przebiegu `orchestra run` w TUI (zdarzenia scheduler i `task_attempt` trafiają już do wspólnego logu).
 - Fragmenty strumienia odpowiedzi dzielące się na granicy odpytywania mogą zostać wypisane w osobnych liniach.

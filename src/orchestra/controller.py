@@ -49,15 +49,25 @@ class Controller:
         # indirekcja: TUI może podmienić permission_handler już po utworzeniu kontrolera
         return await self.permission_handler(agent, tool_call, options)
 
+    async def _start(self, spec: AgentSpec) -> None:
+        session = AgentSession(spec.name, spec.argv, spec.cwd, self.store,
+                               mcp_servers=spec.mcp_servers, permission_handler=self._handler,
+                               env=spec.env or None)
+        try:
+            self.sessions[spec.name] = await self._stack.enter_async_context(session)
+        except Exception:  # noqa: BLE001 - błąd jest już zapisany jako zdarzenie "error"
+            pass
+
     async def start_all(self) -> None:
-        for spec in self.specs.values():
-            session = AgentSession(spec.name, spec.argv, spec.cwd, self.store,
-                                   mcp_servers=spec.mcp_servers, permission_handler=self._handler,
-                                   env=spec.env or None)
-            try:
-                self.sessions[spec.name] = await self._stack.enter_async_context(session)
-            except Exception:  # noqa: BLE001 - błąd jest już zapisany jako zdarzenie "error"
-                continue
+        for spec in list(self.specs.values()):
+            await self._start(spec)
+
+    async def add_agent(self, spec: AgentSpec) -> None:
+        """Dodaje i uruchamia nowego agenta w trakcie pracy (np. z TUI)."""
+        self.specs[spec.name] = spec
+        self.cwds[spec.name] = spec.cwd
+        self._locks[spec.name] = asyncio.Lock()
+        await self._start(spec)
 
     async def send(self, name: str, text: str) -> None:
         session = self.sessions.get(name)

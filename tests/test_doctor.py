@@ -1,3 +1,4 @@
+from dataclasses import replace
 import json
 import os
 import stat
@@ -94,7 +95,9 @@ async def test_doctor_unauthenticated_and_bad_model(fake_path, monkeypatch):
 
 async def test_doctor_model_not_set_is_warning(fake_path, monkeypatch):
     monkeypatch.delenv("ORCHESTRA_CMD_MODEL")
-    rep = await run_doctor(load_config(ROOT / "agents.toml"), timeout=20, others=False)
+    cfg = load_config(ROOT / "agents.toml")
+    cfg.agents["commandcode"] = replace(cfg.agents["commandcode"], default_model="")
+    rep = await run_doctor(cfg, timeout=20, others=False)
     c = by_name(rep)
     assert c["cmd: wybrany model"].status == WARN and "ORCHESTRA_CMD_MODEL" in c["cmd: wybrany model"].hint
 

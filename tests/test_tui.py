@@ -152,3 +152,31 @@ async def test_single_tab_from_table_reaches_prompt(store: EventStore):
         assert isinstance(app.focused, DataTable)
         await pilot.press("tab")
         assert isinstance(app.focused, Input)
+
+
+async def test_new_agent_from_tui(store: EventStore, git_repo: Path):
+    from orchestra.config import AgentConfig, Config
+
+    cfg = Config(agents={"mock": AgentConfig(name="mock", acp=tuple(MOCK))}, roles={})
+    ctrl = Controller(store, [])
+    app = OrchestraApp(store, ctrl, poll_s=0.05, config=cfg, repo=git_repo)
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.press("ctrl+n")
+        await pilot.pause(0.2)
+        screen = app.screen
+        screen.query_one("#new-name", Input).value = "api"
+        await pilot.click("#kind0")
+        await wait_for(pilot, lambda: "api" in ctrl.sessions)
+        await wait_for(pilot, lambda: "api" in app._status)
+        assert (Path(ctrl.cwds["api"]) / "app.py").exists()  # własny worktree
+        # drugi agent tego samego typu dostaje inną nazwę
+        await pilot.press("ctrl+n")
+        await pilot.pause(0.2)
+        await pilot.click("#kind0")
+        await wait_for(pilot, lambda: "mock" in ctrl.sessions)
+        # prompt do ręcznie dodanego agenta
+        app.select_agent("api")
+        app.query_one("#prompt", Input).focus()
+        app.query_one("#prompt", Input).value = "napisz coś"
+        await pilot.press("enter")
+        await wait_for(pilot, lambda: "napisz coś" in log_text(app))

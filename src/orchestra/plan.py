@@ -28,6 +28,7 @@ class PlanTask(BaseModel):
     files: list[str] = Field(default_factory=list, description="Pliki do zmiany lub utworzenia (ścieżki względne)")
     acceptance: list[str] = Field(min_length=1, description="Kryteria akceptacji, każde sprawdzalne testem")
     test_cmd: str = Field(min_length=1, description='Komenda testowa bez powłoki, np. "pytest -q tests/test_x.py"')
+    cwd: str = Field(default="", description="Podkatalog repo, w którym działa worker i test_cmd (np. \"code\"); pusty to korzeń repo")
     difficulty: Difficulty = Field(default="easy", description="easy i medium robi tani worker, hard mocny model")
     depends_on: list[str] = Field(default_factory=list, description="Identyfikatory zadań, które muszą być gotowe")
 
@@ -46,6 +47,13 @@ class PlanTask(BaseModel):
                 raise ValueError("pusta komenda testowa")
         except ValueError as exc:
             raise ValueError(f"test_cmd nie daje się rozbić przez shlex: {exc}") from exc
+        return v
+
+    @field_validator("cwd")
+    @classmethod
+    def _cwd_relative(cls, v: str) -> str:
+        if v.startswith(("/", "~")) or ".." in v.replace("\\", "/").split("/"):
+            raise ValueError(f"cwd musi być względny i wewnątrz repo: {v!r}")
         return v
 
     @field_validator("files")

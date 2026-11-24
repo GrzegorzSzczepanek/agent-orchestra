@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Jeden skrypt: plan i wykonanie zadania przez orkiestratora.
-# Uzycie: scripts/go.sh "cel zadania" [--repo KATALOG] [--parallel N] [--claude] [--plan-only] [--tui]
+# Uzycie: scripts/go.sh "cel zadania" [--repo KATALOG] [--parallel N] [--claude] [--plan-only] [--tui] [--watch]
 # Domyslnie planner to commandcode (dziala bez limitu Claude). --claude uzywa agents.toml z Claude.
 set -euo pipefail
 
@@ -13,6 +13,7 @@ PARALLEL=2
 PLANNER=commandcode
 PLAN_ONLY=0
 TUI=0
+WATCH=0
 CONFIG=""
 
 usage() {
@@ -27,6 +28,7 @@ while [[ $# -gt 0 ]]; do
     --claude) PLANNER=claude; shift ;;
     --plan-only) PLAN_ONLY=1; shift ;;
     --tui) TUI=1; shift ;;
+    --watch) WATCH=1; shift ;;
     -h|--help) usage; exit 0 ;;
     -*) echo "Nieznana opcja: $1" >&2; usage >&2; exit 2 ;;
     *)
@@ -75,4 +77,7 @@ echo "== Plan ($PLANNER)"
 
 echo
 echo "== Wykonanie"
+if [[ $WATCH -eq 1 ]]; then
+  echo "Podglad na zywo w drugim terminalu: $ORCH watch --repo $REPO"
+fi
 "$ORCH" run "$PLAN" --config "$CONFIG" --repo "$REPO" --parallel "$PARALLEL"

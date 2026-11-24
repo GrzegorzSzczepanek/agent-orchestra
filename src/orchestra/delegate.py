@@ -10,7 +10,7 @@ import json
 import shlex
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .commandcode import HeadlessResult, mask_secrets, parse_headless_output, status_for_exit_code
 from .config import Config, ModelRequired
@@ -65,12 +65,18 @@ async def delegate(
     timeout_s: float = 900,
     keep_worktree: bool = True,
     fake_files: dict[str, str] | None = None,
+    cwd: str = "",
+    on_line: Callable[[str], None] | None = None,
 ) -> DelegateResult:
     """Tworzy worktree, uruchamia workera headless, odpala test_cmd i zwraca diff."""
     worker = worker or config.roles.get("implementer", "")
     wt: Worktree = await create_worktree(repo, name=prompt, base=base)
     res = DelegateResult(status="ok", worktree=str(wt.path), branch=wt.branch, worker=worker, test_cmd=test_cmd)
+    workdir = (wt.path / cwd).resolve() if cwd else wt.path
     try:
+        if cwd and (wt.path.resolve() not in workdir.parents or not workdir.is_dir()):
+            res.status, res.error = "worker_failed", f"cwd {cwd!r} nie jest katalogiem w repo (przy HEAD)"
+            return res
         if worker == "fake":
             for rel, content in (fake_files or {}).items():
                 target = (wt.path / rel).resolve()
@@ -91,7 +97,7 @@ async def delegate(
                 res.status, res.error = "config_error", str(exc)
                 return res
             try:
-                code, out, err = await run(argv, wt.path, timeout=timeout_s)
+                code, out, err = await run(argv, workdir, timeout=timeout_s, on_line=on_line)
             except FileNotFoundError:
                 res.status, res.error = "worker_not_found", f"Brak binarki: {argv[0]}"
                 return res
@@ -115,7 +121,7 @@ async def delegate(
                 res.error = _tail(mask_secrets(hr.error or err.strip() or hr.subtype or f"kod wyjścia {code}"))
 
         if test_cmd and res.status == "ok":
-            tcode, tout, terr = await run(shlex.split(test_cmd), wt.path, timeout=timeout_s)
+            tcode, tout, terr = await run(shlex.split(test_cmd), workdir, timeout=timeout_s)
             res.test_exit_code, res.test_output = tcode, _tail(tout + terr)
             if tcode != 0:
                 res.status = "tests_failed"

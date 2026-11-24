@@ -27,6 +27,10 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--no-others", action="store_true", help="pomiń agentów innych niż commandcode")
     d.add_argument("--json", default="orchestra-doctor.json", help="gdzie zapisać raport JSON")
 
+    w = sub.add_parser("watch", help="podgląd na żywo przebiegów i delegowań (TUI, tylko odczyt)")
+    w.add_argument("--repo", default=".", help="repozytorium, którego log zdarzeń oglądasz")
+    w.add_argument("--db", default=None, help="ścieżka bazy zdarzeń (domyślnie <repo>/.orchestra/events.db)")
+
     pl = sub.add_parser("plan", help="rola planner układa plan zadań (DAG) w JSON")
     _add_common(pl)
     pl.add_argument("goal", help="cel do zaplanowania")
@@ -103,6 +107,13 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0 if report.ok else 1
 
 
+def cmd_watch(args: argparse.Namespace) -> int:
+    from .watch import main as watch_main
+
+    watch_main(args.repo, args.db)
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     from .doctor import run_doctor
 
@@ -116,8 +127,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from .node_env import ensure_node
+
+    ensure_node()
     args = build_parser().parse_args(argv)
-    handlers = {"doctor": cmd_doctor, "plan": cmd_plan, "run": cmd_run}
+    handlers = {"doctor": cmd_doctor, "plan": cmd_plan, "run": cmd_run, "watch": cmd_watch}
     handler = handlers.get(args.command)
     if handler is None:  # pragma: no cover
         return 2

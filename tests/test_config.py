@@ -20,14 +20,18 @@ def test_headless_argv_substitution():
 
 
 def test_commandcode_requires_model_with_clear_message(monkeypatch):
+    from dataclasses import replace
+
     import pytest
 
     from orchestra.config import ModelRequired
 
     monkeypatch.delenv("ORCHESTRA_CMD_MODEL", raising=False)
     cfg = load_config(ROOT / "agents.toml")
+    assert cfg.agents["commandcode"].default_model  # repo ma domyślny model, więc brak zmiennej nie jest błędem
+    bare = replace(cfg.agents["commandcode"], default_model="")
     with pytest.raises(ModelRequired, match="ORCHESTRA_CMD_MODEL"):
-        cfg.agents["commandcode"].headless_argv("t")
+        bare.headless_argv("t")
     # zmienna środowiskowa, potem argument (argument wygrywa)
     monkeypatch.setenv("ORCHESTRA_CMD_MODEL", "z-ai/glm-5.3-flash")
     argv = cfg.agents["commandcode"].headless_argv("t")
