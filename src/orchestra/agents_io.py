@@ -32,7 +32,7 @@ def headless_ask(config: Config, role: str, repo: str | Path, *, model: str = ""
         except FileNotFoundError as exc:
             raise AskError(f"brak binarki {argv[0]} dla roli {role}") from exc
         hr = parse_headless_output(out)
-        if code != 0 or hr.subtype == "error":
+        if code != 0 or hr.subtype == "error" or hr.is_error:
             raise AskError(mask_secrets(f"rola {role} zwróciła błąd (kod {code}): {hr.error or err.strip()[-400:]}"))
         return hr.final_text if hr.found_result else out
 

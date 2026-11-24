@@ -109,7 +109,7 @@ async def delegate(
                 res.status = status_for_exit_code(code)
             elif hr.subtype == "max_turns":
                 res.status = "max_turns"
-            elif hr.subtype == "error":
+            elif hr.subtype == "error" or hr.is_error:
                 res.status = "worker_failed"
             if res.status != "ok":
                 res.error = _tail(mask_secrets(hr.error or err.strip() or hr.subtype or f"kod wyjścia {code}"))

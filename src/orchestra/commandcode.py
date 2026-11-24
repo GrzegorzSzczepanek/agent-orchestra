@@ -61,6 +61,7 @@ class HeadlessResult:
     events: int = 0  # liczba rozpoznanych ramek event
     parse_errors: int = 0  # linie wyglądające na JSON, których nie dało się sparsować
     found_result: bool = False
+    is_error: bool = False  # claude ustawia to nawet przy subtype=success (np. limit zużycia)
 
 
 def normalize_usage(raw: Mapping[str, Any] | None) -> dict[str, int]:
@@ -108,7 +109,8 @@ def parse_headless_output(stdout: str) -> HeadlessResult:
             res.final_text = text if isinstance(text, str) else str(text)
             err = obj.get("error")
             res.error = err if isinstance(err, str) else ("" if err is None else str(err))
-            if obj.get("is_error") and not res.error:
+            res.is_error = bool(obj.get("is_error"))
+            if res.is_error and not res.error:
                 res.error = res.final_text
             res.session_id = str(obj.get("sessionId") or obj.get("session_id") or "")
             res.stop_reason = str(obj.get("stopReason") or "")

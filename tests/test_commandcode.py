@@ -56,6 +56,21 @@ def test_parse_no_result_line():
     assert not r.found_result and r.subtype == ""
 
 
+def test_parse_real_claude_usage_limit_is_error_despite_success_subtype():
+    """Prawdziwa odpowiedź `claude -p --output-format json` przy limicie: subtype=success, is_error=true."""
+    r = parse_headless_output((FIX / "claude_result_usage_limit.json").read_text())
+    assert r.found_result and r.subtype == "success"
+    assert r.is_error and "monthly spend limit" in r.error
+    assert r.usage["tokens_in"] == 0 and r.cost_usd == 0.0
+
+
+def test_parse_real_claude_success_fixture():
+    r = parse_headless_output((FIX / "claude_result_success.json").read_text())
+    assert r.found_result and not r.is_error and r.final_text == "ok"
+    assert r.usage == {"tokens_in": 15304, "tokens_out": 37, "cache_read": 0, "cache_write": 0}
+    assert r.cost_usd == pytest.approx(0.0123)
+
+
 def test_exit_code_mapping():
     assert status_for_exit_code(0) == "ok"
     assert status_for_exit_code(8) == "max_turns"
@@ -117,6 +132,15 @@ async def test_delegate_statuses(git_repo: Path, tmp_path: Path, subtype, code, 
     assert res.test_exit_code is None  # bramka testów nie rusza przy porażce workera
     assert res.worker_exit_code == code
     assert res.error
+
+
+async def test_delegate_claude_is_error_with_zero_exit_is_worker_failed(git_repo: Path, tmp_path: Path):
+    """Claude potrafi zwrócić kod 0 i subtype=success, a mimo to is_error=true (np. limit zużycia)."""
+    fixture = FIX / "claude_result_usage_limit.json"
+    agent = _script(tmp_path, f"import sys\nsys.stdout.write(open({str(fixture)!r}).read())\n")
+    res = await delegate(Config(agents={"w": agent}, roles={}), git_repo, "x", worker="w")
+    assert res.status == "worker_failed" and "monthly spend limit" in res.error
+    assert res.worker_exit_code == 0
 
 
 async def test_delegate_model_required_is_config_error(git_repo: Path, monkeypatch):

@@ -95,6 +95,18 @@ async def test_headless_ask_error_is_reported(git_repo: Path):
         await headless_ask(Config(agents={"b": bad}, roles={"planner": "b"}), "planner", git_repo)("x")
 
 
+async def test_headless_ask_claude_is_error_with_zero_exit(git_repo: Path, tmp_path: Path):
+    """Claude przy limicie zwraca kod 0, subtype=success i is_error=true; to nadal błąd roli."""
+    from orchestra.agents_io import AskError
+
+    script = tmp_path / "claude.py"
+    fixture = Path(__file__).parent / "fixtures" / "claude_result_usage_limit.json"
+    script.write_text(f"import sys\nsys.stdout.write(open({str(fixture)!r}).read())\n")
+    agent = AgentConfig(name="c", headless=(sys.executable, str(script), "{task}"))
+    with pytest.raises(AskError, match="monthly spend limit"):
+        await headless_ask(Config(agents={"c": agent}, roles={"planner": "c"}), "planner", git_repo)("x")
+
+
 def test_cli_plan_then_run_end_to_end(git_repo: Path, tmp_path: Path, capsys, monkeypatch):
     cfg = write_cfg(tmp_path)
     plan_path = tmp_path / "plan.json"
