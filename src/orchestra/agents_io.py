@@ -21,19 +21,42 @@ class AskError(RuntimeError):
     pass
 
 
-def headless_ask(config: Config, role: str, repo: str | Path, *, model: str = "", timeout_s: float = 600) -> Ask:
-    """Pytanie do agenta roli przez jego komendę headless (np. `claude -p ... --output-format json`)."""
+def headless_ask(
+    config: Config,
+    role: str,
+    repo: str | Path,
+    *,
+    model: str = "",
+    timeout_s: float = 600,
+    store: EventStore | None = None,
+) -> Ask:
+    """Pytanie do agenta roli przez jego komendę headless (np. `claude -p ... --output-format json`).
+
+    Gdy przekazano store, każde wywołanie trafia do SQLite jako `role_attempt` z tokenami i kosztem,
+    dzięki czemu tabela kosztów obejmuje też planistę i recenzenta.
+    """
     agent = config.agent_for_role(role)
+
+    def log(status: str, hr=None) -> None:
+        if store is None:
+            return
+        usage = (hr.usage if hr else {}) or {}
+        store.add_event(f"role:{role}", "role_attempt", {"role": role, "status": status},
+                        tokens_in=int(usage.get("tokens_in", 0)), tokens_out=int(usage.get("tokens_out", 0)),
+                        cost=float(hr.cost_usd if hr else 0.0))
 
     async def ask(prompt: str) -> str:
         argv = agent.headless_argv(prompt, model or None)
         try:
             code, out, err = await run(argv, repo, timeout=timeout_s)
         except FileNotFoundError as exc:
+            log("worker_not_found")
             raise AskError(f"brak binarki {argv[0]} dla roli {role}") from exc
         hr = parse_headless_output(out)
         if code != 0 or hr.subtype == "error" or hr.is_error:
+            log("error", hr)
             raise AskError(mask_secrets(f"rola {role} zwróciła błąd (kod {code}): {hr.error or err.strip()[-400:]}"))
+        log("ok", hr)
         return hr.final_text if hr.found_result else out
 
     return ask

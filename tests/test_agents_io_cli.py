@@ -95,6 +95,28 @@ async def test_headless_ask_error_is_reported(git_repo: Path):
         await headless_ask(Config(agents={"b": bad}, roles={"planner": "b"}), "planner", git_repo)("x")
 
 
+async def test_headless_ask_logs_role_usage_to_store(git_repo: Path, tmp_path: Path):
+    store = EventStore(":memory:")
+    ok = tmp_path / "ok.py"
+    ok.write_text('import json\nprint(json.dumps({"type":"result","subtype":"success","usage":'
+                  '{"inputTokens": 20, "outputTokens": 4},"durationMs":1,"finalText":"plan"}))\n')
+    agent = AgentConfig(name="p", headless=(sys.executable, str(ok), "{task}"))
+    await headless_ask(Config(agents={"p": agent}, roles={"planner": "p"}), "planner", git_repo,
+                       store=store)("x")
+    ev = store.events(agent="role:planner")
+    assert [(e.kind, e.tokens_in, e.tokens_out) for e in ev] == [("role_attempt", 20, 4)]
+
+    fixture = Path(__file__).parent / "fixtures" / "claude_result_usage_limit.json"
+    bad = tmp_path / "bad.py"
+    bad.write_text(f"import sys\nsys.stdout.write(open({str(fixture)!r}).read())\n")
+    bad_agent = AgentConfig(name="b", headless=(sys.executable, str(bad), "{task}"))
+    with pytest.raises(Exception):
+        await headless_ask(Config(agents={"b": bad_agent}, roles={"planner": "b"}), "planner", git_repo,
+                           store=store)("x")
+    assert [e.kind for e in store.events(agent="role:planner")] == ["role_attempt", "role_attempt"]
+    assert store.events(agent="role:planner")[-1].payload["status"] == "error"
+
+
 async def test_headless_ask_claude_is_error_with_zero_exit(git_repo: Path, tmp_path: Path):
     """Claude przy limicie zwraca kod 0, subtype=success i is_error=true; to nadal błąd roli."""
     from orchestra.agents_io import AskError

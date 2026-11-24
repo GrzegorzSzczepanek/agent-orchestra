@@ -60,7 +60,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
     cfg, repo = load_config(args.config), Path(args.repo).resolve()
     store = EventStore(repo / ".orchestra" / "events.db")
     ask = (acp_ask(cfg, "planner", repo, store) if args.via == "acp"
-           else headless_ask(cfg, "planner", repo, model=args.model))
+           else headless_ask(cfg, "planner", repo, model=args.model, store=store))
 
     async def go():
         return await make_plan(args.goal, ask, repo_files=await repo_files(repo))
@@ -92,7 +92,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     opts = RunOptions(parallel=args.parallel, max_failures=args.max_failures, escalate=not args.no_escalate,
                       token_budget=args.token_budget, cost_budget_usd=args.cost_budget,
                       discussion_rounds=args.rounds, worker=args.worker, model=args.model, timeout_s=args.timeout)
-    reviewer = make_reviewer(headless_ask(cfg, "reviewer", repo)) if opts.discussion_rounds else None
+    reviewer = (make_reviewer(headless_ask(cfg, "reviewer", repo, store=store))
+                if opts.discussion_rounds else None)
     report = asyncio.run(run_plan(plan, cfg, repo, store, opts, reviewer=reviewer))
     print(report.render())
     out = Path(args.report) if args.report else repo / ".orchestra" / "runs" / f"{report.run_id}.json"
