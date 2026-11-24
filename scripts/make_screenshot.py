@@ -86,8 +86,11 @@ async def main() -> None:
         d = tmp / n
         d.mkdir()
         specs.append(AgentSpec(n, MOCK, str(d)))
-    cfg = Config(agents={k: AgentConfig(name=k, acp=tuple(MOCK)) for k in ("claude", "commandcode", "opencode", "codex")},
-                 roles={})
+    demo = {"claude": "strong", "commandcode": "cheap", "opencode": "cheap", "codex": "strong"}
+    cfg = Config(agents={k: AgentConfig(name=k, acp=tuple(MOCK), headless=(sys.executable, "{task}"), tier=tier,
+                                        default_model="deepseek/deepseek-v4.1-flash" if k == "commandcode" else "")
+                         for k, tier in demo.items()},
+                 roles={"planner": "claude", "reviewer": "claude", "implementer": "commandcode"})
 
     app = OrchestraApp(store, Controller(store, specs), poll_s=0.05, config=cfg, repo=repo)
     async with app.run_test(size=(150, 40)) as pilot:

@@ -163,10 +163,10 @@ class Scheduler:
 
     # --- konfiguracja pomocnicza ---
     def _worker(self) -> str:
-        return self.opt.worker or self.config.roles.get("implementer", "")
+        return self.opt.worker or self.config.role_name("implementer")
 
     def _strong(self) -> str:
-        return self.config.roles.get(self.opt.escalate_role, "")
+        return self.config.role_name(self.opt.escalate_role)
 
     def _step_logger(self, task: PlanTask, worker: str) -> Callable[[str], None]:
         """Linie stdout workera -> zdarzenia worker_step (agent task:<id>), widoczne na żywo w TUI."""

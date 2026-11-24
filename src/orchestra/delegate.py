@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shlex
+import shutil
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -53,6 +55,21 @@ def _tail(text: str, limit: int = 4000) -> str:
     return text if len(text) <= limit else "...\n" + text[-limit:]
 
 
+def _missing_test_binary(test_cmd: str, workdir: Path) -> str:
+    """Nazwa pierwszego polecenia z test_cmd, jeśli nie da się go uruchomić (inaczej pusty napis)."""
+    try:
+        parts = shlex.split(test_cmd)
+    except ValueError:
+        return ""  # niepoprawny cudzysłów wyjdzie przy właściwym uruchomieniu
+    if not parts:
+        return ""
+    exe = parts[0]
+    if "/" in exe:
+        path = Path(exe) if Path(exe).is_absolute() else workdir / exe
+        return "" if path.is_file() and os.access(path, os.X_OK) else exe
+    return "" if shutil.which(exe) else exe
+
+
 async def delegate(
     config: Config,
     repo: str | Path,
@@ -69,13 +86,19 @@ async def delegate(
     on_line: Callable[[str], None] | None = None,
 ) -> DelegateResult:
     """Tworzy worktree, uruchamia workera headless, odpala test_cmd i zwraca diff."""
-    worker = worker or config.roles.get("implementer", "")
+    worker = worker or config.role_name("implementer")
     wt: Worktree = await create_worktree(repo, name=prompt, base=base)
     res = DelegateResult(status="ok", worktree=str(wt.path), branch=wt.branch, worker=worker, test_cmd=test_cmd)
     workdir = (wt.path / cwd).resolve() if cwd else wt.path
     try:
         if cwd and (wt.path.resolve() not in workdir.parents or not workdir.is_dir()):
             res.status, res.error = "worker_failed", f"cwd {cwd!r} nie jest katalogiem w repo (przy HEAD)"
+            return res
+        missing = _missing_test_binary(test_cmd, workdir)
+        if missing:  # lepiej zatrzymać się od razu niż spalić tokeny workera na zadaniu, którego nie da się zweryfikować
+            res.status = "config_error"
+            res.error = (f"test_cmd: nie znaleziono polecenia {missing!r} (PATH albo katalog {cwd or '.'} w worktree). "
+                         "Zainstaluj je, podaj pełną ścieżkę albo popraw test_cmd.")
             return res
         if worker == "fake":
             for rel, content in (fake_files or {}).items():

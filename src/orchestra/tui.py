@@ -18,7 +18,7 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, DataTable, Footer, Header, Input, Label, RichLog, Select, Static
 
-from .config import Config
+from .config import ROLE_NAMES, Config, save_overrides
 from .controller import AgentSpec, Controller, orchestra_mcp_server
 from .progress import RunView, build_runs
 from .render import render_events, status_of
@@ -32,8 +32,9 @@ ROW_LABEL = {"scheduler": "▶ przebieg zadań", "inbox": "✉ wiadomości"}
 TASK_STATUS = {"pending": "○ pending", "running": "● working", "done": "✓ done", "failed": "✗ failed",
                "blocked": "⊘ blocked", "skipped": "– skipped", "over_budget": "$ budżet"}
 MAX_RELAY = 10  # tyle wiadomości agent->agent z rzędu przekazujemy dalej, zanim poczekamy na człowieka
-BUTTONS = (("b-new", "＋ Agent  ^N"), ("b-msg", "✉ Wiadomość  F3"), ("b-hint", "✎ Wskazówka  F4"),
-           ("b-detail", "🔎 Szczegóły  F5"), ("b-cancel", "⛔ Anuluj przebieg  F6"), ("b-diff", "± Diff  F2"))
+# Skróty klawiszowe widać w stopce, więc etykiety są krótkie i mieszczą się też w wąskim panelu (tmux).
+BUTTONS = (("b-new", "＋ Agent"), ("b-plan", "▶ Plan"), ("b-msg", "✉ Wiadom."), ("b-hint", "✎ Wskazówka"),
+           ("b-detail", "🔎 Info"), ("b-cancel", "⛔ Anuluj"), ("b-diff", "± Diff"), ("b-roles", "⚙ Role"))
 STATUS_ICON = {"done": "✓ done", "idle": "○ idle", "working": "● working", "waiting": "? waiting", "error": "✗ error",
                "stopped": "· stopped", "": "·"}
 
@@ -223,12 +224,123 @@ class ConfirmScreen(ModalScreen[bool]):
         self.dismiss(False)
 
 
+class RolesScreen(ModalScreen[tuple[dict[str, str], dict[str, str]] | None]):
+    """Wybór, który agent pełni role planner, reviewer, implementer, i model wybranego agenta."""
+
+    BINDINGS = [Binding("escape", "cancel", "Anuluj")]
+    DEFAULT_CSS = """
+    RolesScreen { align: center middle; }
+    #roles-box { width: 74; height: auto; max-height: 95%; border: thick $primary; background: $surface; padding: 1 2; }
+    #roles-box Button { margin-top: 1; width: 100%; }
+    """
+    LABEL = {"planner": "planner (układa plan)", "reviewer": "reviewer (ocenia diff)", "implementer": "implementer (worker)"}
+
+    def __init__(self, config: Config):
+        super().__init__()
+        self.cfg = config
+
+    def _options(self) -> list[tuple[str, str]]:
+        return [(f"{n}{'' if a.is_available() else '  (brak w PATH)'}", n) for n, a in self.cfg.agents.items()]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="roles-box"):
+            yield Label("Kto pełni role. Agent bez binarki w PATH zostanie zastąpiony pierwszym dostępnym.")
+            for role in ROLE_NAMES:
+                yield Label(self.LABEL[role])
+                yield Select(self._options(), value=self.cfg.role_name(role), allow_blank=False, id=f"role-{role}")
+            yield Label("Model agenta (pusto: domyślny agenta). Format zależy od agenta, np. provider/model")
+            first = self.cfg.role_name("implementer")
+            yield Select(self._options(), value=first if first in self.cfg.agents else next(iter(self.cfg.agents)),
+                         allow_blank=False, id="model-agent")
+            yield Input(value=self.cfg.agents[first].resolve_model() if first in self.cfg.agents else "",
+                        placeholder="model, np. deepseek/deepseek-v4.1-flash", id="model-value")
+            yield Button("Zapisz", id="roles-ok", variant="success")
+            yield Button("Anuluj", id="roles-cancel")
+
+    @on(Select.Changed, "#model-agent")
+    def model_agent_changed(self, event: Select.Changed) -> None:
+        if event.value in self.cfg.agents:
+            self.query_one("#model-value", Input).value = self.cfg.agents[str(event.value)].resolve_model()
+
+    @on(Button.Pressed, "#roles-ok")
+    def ok(self) -> None:
+        roles = {r: str(self.query_one(f"#role-{r}", Select).value) for r in ROLE_NAMES}
+        agent = str(self.query_one("#model-agent", Select).value)
+        model = self.query_one("#model-value", Input).value.strip()
+        current = self.cfg.agents[agent].resolve_model()
+        self.dismiss((roles, {agent: model} if model != current else {}))
+
+    @on(Button.Pressed, "#roles-cancel")
+    def cancel_button(self) -> None:
+        self.dismiss(None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class PlanScreen(ModalScreen[tuple[str, str] | None]):
+    """Własny podział pracy: cel dla plannera albo gotowy plik planu JSON (bez klienta typu Claude Code)."""
+
+    BINDINGS = [Binding("escape", "cancel", "Anuluj")]
+    DEFAULT_CSS = """
+    PlanScreen { align: center middle; }
+    #plan-box { width: 76; height: auto; border: thick $success; background: $surface; padding: 1 2; }
+    #plan-box Button { margin-top: 1; width: 100%; }
+    """
+
+    def __init__(self, planner: str, default_file: str):
+        super().__init__()
+        self.planner, self.default_file = planner, default_file
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="plan-box"):
+            yield Label(f"Cel: agent [b]{self.planner}[/b] rozbije go na zadania i workery je wykonają")
+            yield Input(placeholder="np. dodaj walidację e-maili wraz z testami", id="plan-goal")
+            yield Button("Zaplanuj i uruchom", id="plan-goal-ok", variant="success")
+            yield Label("Albo własny podział: plik planu JSON (szablon: orchestra init-plan)")
+            yield Input(value=self.default_file, placeholder="ścieżka do plan.json", id="plan-file")
+            yield Button("Uruchom plan z pliku", id="plan-file-ok", variant="primary")
+            yield Button("Anuluj", id="plan-cancel")
+
+    @on(Button.Pressed, "#plan-goal-ok")
+    def goal_ok(self) -> None:
+        goal = self.query_one("#plan-goal", Input).value.strip()
+        if goal:
+            self.dismiss(("goal", goal))
+        else:
+            self.notify("Wpisz cel", severity="warning")
+
+    @on(Button.Pressed, "#plan-file-ok")
+    def file_ok(self) -> None:
+        path = self.query_one("#plan-file", Input).value.strip()
+        if path:
+            self.dismiss(("file", path))
+        else:
+            self.notify("Podaj ścieżkę pliku", severity="warning")
+
+    @on(Input.Submitted, "#plan-goal")
+    def goal_submitted(self) -> None:
+        self.goal_ok()
+
+    @on(Input.Submitted, "#plan-file")
+    def file_submitted(self) -> None:
+        self.file_ok()
+
+    @on(Button.Pressed, "#plan-cancel")
+    def cancel_button(self) -> None:
+        self.dismiss(None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class OrchestraApp(App[None]):
     TITLE = "agent-orchestra"
     CSS = """
     #toolbar { height: 3; }
-    #toolbar Button { margin-right: 1; min-width: 12; }
-    #side { width: 46; border-right: solid $primary; }
+    #toolbar Button { margin-right: 0; min-width: 0; padding: 0 1; }
+    #rolebar { height: 1; color: $text-muted; padding: 0 1; }
+    #side { width: 40%; min-width: 30; max-width: 46; border-right: solid $primary; }
     #main { width: 1fr; }
     #log, #diff { height: 1fr; }
     #diff { display: none; border-top: solid $secondary; }
@@ -241,6 +353,8 @@ class OrchestraApp(App[None]):
         Binding("f4", "hint", "Wskazówka"),
         Binding("f5", "detail", "Szczegóły"),
         Binding("f6", "cancel_run", "Anuluj przebieg"),
+        Binding("f7", "plan", "Plan"),
+        Binding("f8", "roles", "Role"),
         Binding("f2", "toggle_diff", "Diff"),
         Binding("ctrl+q", "quit", "Wyjście"),
     ]
@@ -266,6 +380,7 @@ class OrchestraApp(App[None]):
         with Horizontal(id="toolbar"):
             for bid, label in BUTTONS:
                 yield Button(label, id=bid)
+        yield Static("", id="rolebar", markup=False)
         with Horizontal():
             with Vertical(id="side"):
                 yield DataTable(id="agents", cursor_type="row")
@@ -283,6 +398,8 @@ class OrchestraApp(App[None]):
         self._diff = self.query_one("#diff", RichLog)
         self._hint = self.query_one("#hint", Static)
         self._prompt = self.query_one("#prompt", Input)
+        self._rolebar = self.query_one("#rolebar", Static)
+        self._jobs: set[asyncio.Task] = set()
         # Tab ma iść z tabeli prosto do promptu (logi przewijasz myszą, przyciski klikasz albo F-klawisze)
         self._log.can_focus = False
         self._diff.can_focus = False
@@ -294,11 +411,27 @@ class OrchestraApp(App[None]):
         msgs = self.store.messages(0, limit=1_000_000)
         self._msg_last = msgs[-1].id if msgs else 0  # stare wiadomości nie są odtwarzane agentom
         self.set_interval(self.poll_s, self.poll)
+        self.set_interval(2.0, self.refresh_roles)  # wybór ról mógł zmienić `orchestra roles` albo inny proces
+        self.refresh_roles()
         if self.controller is not None:
             self.run_worker(self.controller.start_all(), exclusive=False)
         self.poll()
 
+    def refresh_roles(self) -> None:
+        if self.config is None or self.repo is None:
+            self._rolebar.update("")
+            return
+        self.config.reload_overrides(self.repo)
+        parts = []
+        for role in ROLE_NAMES:
+            info = self.config.role_info(role)
+            model = self.config.agents[info.effective].resolve_model() if info.effective in self.config.agents else ""
+            parts.append(f"{role}: {info.effective or '?'}{f' [{model}]' if model and role == 'implementer' else ''}{' *' if info.changed else ''}")
+        self._rolebar.update("Role: " + " | ".join(parts) + "   (* = zmiana, F8)")
+
     async def on_unmount(self) -> None:
+        for job in self._jobs:
+            job.cancel()
         if self.controller is not None:
             await self.controller.aclose()
 
@@ -433,7 +566,8 @@ class OrchestraApp(App[None]):
     # --- akcje z przycisków i F-klawiszy ---
     @on(Button.Pressed, "#toolbar Button")
     def toolbar_pressed(self, event: Button.Pressed) -> None:
-        {"b-new": self.action_new_agent, "b-msg": self.action_message, "b-hint": self.action_hint,
+        {"b-new": self.action_new_agent, "b-plan": self.action_plan, "b-roles": self.action_roles,
+         "b-msg": self.action_message, "b-hint": self.action_hint,
          "b-detail": self.action_detail, "b-cancel": self.action_cancel_run,
          "b-diff": lambda: self.run_worker(self.action_toggle_diff(), exclusive=False)}[event.button.id or ""]()
 
@@ -567,6 +701,65 @@ class OrchestraApp(App[None]):
                     "Nie odpowiadaj na samo potwierdzenie.)")
             self.run_worker(self.controller.send(m.to_agent, text), exclusive=False)
 
+    # --- role ---
+    def action_roles(self) -> None:
+        if self.config is None or self.repo is None:
+            self.notify("Role wymagają agents.toml i repo (uruchom bez --demo)", severity="warning")
+            return
+        self.push_screen(RolesScreen(self.config), callback=self._roles_chosen)
+
+    def _roles_chosen(self, choice: tuple[dict[str, str], dict[str, str]] | None) -> None:
+        if choice is None or self.config is None or self.repo is None:
+            return
+        roles, models = choice
+        save_overrides(self.repo, roles=roles, models=models)
+        self.refresh_roles()
+        self.notify("Zapisano role. Obowiązują od następnego przebiegu (także dla Claude'a przez MCP).")
+
+    # --- plan: cel dla plannera albo własny plik ---
+    def action_plan(self) -> None:
+        if self.config is None or self.repo is None:
+            self.notify("Plan wymaga agents.toml i repo (uruchom bez --demo)", severity="warning")
+            return
+        default = next((p for p in (".orchestra/plan.json", "plan.json") if (self.repo / p).is_file()), "")
+        self.push_screen(PlanScreen(self.config.role_name("planner"), default), callback=self._plan_chosen)
+
+    def _plan_chosen(self, choice: tuple[str, str] | None) -> None:
+        if choice is None:
+            return
+        job = asyncio.ensure_future(self._plan_job(*choice))
+        self._jobs.add(job)
+        job.add_done_callback(self._jobs.discard)
+
+    async def _plan_job(self, mode: str, text: str) -> None:
+        assert self.config is not None and self.repo is not None
+        from .agents_io import headless_ask, repo_files
+        from .plan import Plan, PlanError, make_plan
+        from .scheduler import RunOptions, Scheduler
+
+        self.config.reload_overrides(self.repo)
+        try:
+            if mode == "file":
+                path = Path(text).expanduser()
+                path = path if path.is_absolute() else self.repo / path
+                plan = Plan.model_validate_json(path.read_text(encoding="utf-8"))
+            else:
+                planner = self.config.role_name("planner")
+                self.notify(f"Planuję przez {planner}, to może potrwać do minuty...")
+                ask = headless_ask(self.config, "planner", self.repo, store=self.store)
+                plan = await make_plan(text, ask, repo_files=await repo_files(self.repo))
+        except (OSError, ValueError, PlanError, RuntimeError, KeyError) as exc:
+            self.notify(f"Plan nieudany: {exc}", severity="error", timeout=15)
+            return
+        self.notify(f"Plan: {len(plan.tasks)} zadań, startuję workery")
+        opts = RunOptions(parallel=2, escalate=False)  # porażka zostaje widoczna, bez cichej eskalacji do drogiego modelu
+        try:
+            report = await Scheduler(self.config, self.repo, self.store, opts).run(plan)
+        except Exception as exc:  # noqa: BLE001
+            self.notify(f"Przebieg przerwany: {exc}", severity="error", timeout=15)
+            return
+        self.notify(f"Przebieg {report.run_id} zakończony. Gałąź do przeglądu: {report.integration_branch}", timeout=20)
+
     # --- nowy agent ---
     def action_new_agent(self) -> None:
         if self.controller is None or self.config is None or self.repo is None:
@@ -658,9 +851,16 @@ def main(argv: list[str] | None = None) -> None:
         from .config import load_config
         from .controller import specs_from_config
 
+        from .worktree import ensure_local_exclude
+
+        ensure_local_exclude(repo)
         config_path = Path(args.config).resolve()
-        config = load_config(config_path)
+        config = load_config(config_path, repo=repo)
         names = [n for n in args.agents.split(",") if n]
+        if not names:  # domyślnie jedna sesja agenta roli implementer, o ile jest zainstalowany i mówi ACP
+            impl = config.role_name("implementer")
+            if impl in config.agents and config.agents[impl].acp and config.available(impl):
+                names = [impl]
         specs = asyncio.run(specs_from_config(config, repo, names, config_path=config_path, db_path=store.path)) if names else []
 
     OrchestraApp(store, Controller(store, specs), config=config, repo=None if args.demo else repo,

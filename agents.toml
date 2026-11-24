@@ -3,6 +3,11 @@
 # env_passthrough: zmienne środowiskowe przekazywane agentowi ACP (SDK domyślnie daje okrojone środowisko)
 # headless: szablon komendy trybu nieinteraktywnego, {task} i {model} są podstawiane
 
+# Gdy agent roli nie jest zainstalowany, rola przechodzi na pierwszego dostępnego z tej listy
+# (potem na dowolnego innego z pliku). Wybór można zmienić w TUI (przycisk Role) albo `orchestra roles`.
+# Własne agenty i modele dopisz w ~/.config/orchestra/agents.toml albo <repo>/.orchestra/agents.toml.
+fallback_order = ["claude", "commandcode", "opencode", "codex", "antigravity"]
+
 [roles]
 planner = "claude"
 reviewer = "claude"
@@ -33,7 +38,10 @@ tier = "strong"
 [agents.opencode]
 description = "OpenCode, natywny ACP"
 acp = ["opencode", "acp"]
-headless = ["opencode", "run", "{task}"]
+# --dangerously-skip-permissions: bez tego `opencode run` odrzuca edycje plików. Izolacją jest worktree.
+# {model} to ID w formacie provider/model (np. opencode/big-pickle); puste, to model z konfiguracji opencode.
+headless = ["opencode", "run", "{task}", "--model", "{model}", "--dangerously-skip-permissions"]
+model_env = "ORCHESTRA_OPENCODE_MODEL"
 tier = "cheap"
 
 [agents.commandcode]

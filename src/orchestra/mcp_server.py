@@ -16,12 +16,14 @@ from .agents_io import headless_ask, make_reviewer
 from .progress import build_runs
 from .scheduler import RunOptions, RunReport, Scheduler
 from .store import EventStore
+from .worktree import ensure_local_exclude
 
 
 def build_server(config: Config | None = None, repo: str | Path | None = None) -> FastMCP:
     mcp = FastMCP(name="orchestra")
-    cfg = config or load_config(os.environ.get("ORCHESTRA_CONFIG", "agents.toml"))
     default_repo = Path(repo or os.environ.get("ORCHESTRA_REPO", ".")).resolve()
+    ensure_local_exclude(default_repo)
+    cfg = config or load_config(os.environ.get("ORCHESTRA_CONFIG", "agents.toml"), repo=default_repo)
     store = EventStore(os.environ.get("ORCHESTRA_DB", default_repo / ".orchestra" / "events.db"))
     me = os.environ.get("ORCHESTRA_AGENT", "")  # nazwa agenta, któremu serwer jest podpięty (ustawia TUI)
 
@@ -42,6 +44,7 @@ def build_server(config: Config | None = None, repo: str | Path | None = None) -
         test_cmd jest uruchamiane bez powłoki (shlex), np. "pytest -q tests/test_x.py".
         worker "fake" służy do testów i zapisuje pliki z fake_files.
         """
+        cfg.reload_overrides(default_repo)  # role i modele wybrane w TUI
         result = await run_delegate(
             cfg,
             default_repo,
@@ -86,8 +89,9 @@ def build_server(config: Config | None = None, repo: str | Path | None = None) -
         do gałęzi integracyjnej orchestra/run-<id>. Zadania, których worker nie rozwiązał, wracają
         do Ciebie (status failed) i robisz je sam.
         review_rounds 1 do 2: po zielonych testach rola reviewer ocenia diff, uwagi wracają do workera (kosztuje
-        zużycie roli reviewer, domyślnie Claude). Rozmowa recenzenta z workerem jest widoczna w wierszu inbox TUI. Postęp: run_status albo `orchestra watch` w terminalu.
+        zużycie roli reviewer, jej agenta zmienia się w TUI). Rozmowa recenzenta z workerem jest widoczna w wierszu inbox TUI. Postęp widać w TUI obok (orch), a stan zwraca run_status.
         """
+        cfg.reload_overrides(default_repo)  # role i modele wybrane w TUI
         plan = Plan(goal=goal, tasks=tasks)
         opts = RunOptions(parallel=parallel, escalate=False, worker=worker, model=model,
                           token_budget=token_budget, timeout_s=timeout_s, discussion_rounds=review_rounds)

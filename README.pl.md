@@ -38,7 +38,7 @@ flowchart LR
 
 ## Szybki start
 
-Wymagania: Python 3.11+, Node 22+, git, [Claude Code](https://claude.com/claude-code), `command-code` (`npm i -g command-code`). Opcjonalnie tmux (launcher `orch` sam otwiera w nim dwa panele).
+Wymagania: Python 3.11+, Node 22+, git, `command-code` (`npm i -g command-code`) oraz klient sterujący: [Claude Code](https://claude.com/claude-code), OpenCode albo Codex (albo żaden, patrz niżej). Opcjonalnie tmux (launcher `orch` sam otwiera w nim dwa panele).
 
 ```bash
 git clone https://github.com/GrzegorzSzczepanek/agent-orchestra
@@ -55,13 +55,42 @@ mkdir -p ~/.local/bin && ln -sf "$PWD/scripts/orch" ~/.local/bin/orch
 cd ~/jakies/repo && orch
 ```
 
-`orch` otwiera w jednym oknie Claude'a z podpiętym serwerem `orchestra` (lewy panel) oraz TUI (prawy panel). Nic nie trzeba rejestrować globalnie: serwer MCP jest podawany przez `--mcp-config`. Potem napisz do Claude'a, np.:
+`orch` otwiera w jednym oknie klienta z podpiętym serwerem `orchestra` (lewy panel) oraz TUI (prawy panel). Nic nie trzeba rejestrować globalnie: serwer MCP jest podawany klientowi przy starcie. Potem napisz do Claude'a, np.:
 
 > Użyj orchestrate-hard-task. Dopisz testy jednostkowe do modułów w `src/`, które ich nie mają. Rozbij to na zadania i rozdaj workerom.
 
 Model workera: `default_model` w `agents.toml` (domyślnie `deepseek/deepseek-v4.1-flash`), zmienna `ORCHESTRA_CMD_MODEL` ma pierwszeństwo. Lista modeli: `cmd --list-models`.
 
-> **Node.** `cmd` i adapter ACP wymagają Node 22 lub nowszego. `orchestra`, `orchestra-mcp` i `orchestra-tui` same dopisują do PATH Node 22+ z nvm, gdy domyślny jest starszy albo `cmd` nie jest w PATH.
+> **Node.** `cmd` i adapter ACP wymagają Node 22 lub nowszego. `orchestra`, `orchestra-mcp`, `orchestra-client` i `orchestra-tui` same dopisują do PATH Node 22+ z nvm, gdy domyślny jest starszy albo `cmd` nie jest w PATH.
+
+## Bez Claude'a i z innymi providerami
+
+Claude jest domyślny, ale nie wymagany. Wszystko ma fallback i wszystko da się zmienić w TUI.
+
+**Klient sterujący.** `orch` wybiera pierwszego znalezionego klienta (`claude`, `opencode`, `codex`) albo tego, którego podasz w `--client`. Do każdego podpina ten sam serwer MCP `orchestra` i tę samą instrukcję rozbijania zadań, różni się tylko sposób podłączenia. Gdy nie ma żadnego, `orch` nie kończy się błędem: otwiera samo TUI, a przycisk **▶ Plan** (F7) przyjmuje cel, który rola planner rozbija na zadania, albo plik planu napisany przez Ciebie (szablon zapisze `orchestra init-plan`).
+
+**Role z fallbackiem.** `planner`, `reviewer` i `implementer` wskazują agentów z `agents.toml`. Jeśli wskazany agent nie jest zainstalowany, rola przechodzi na pierwszego dostępnego (planner i reviewer wolą poziom `strong`, worker `cheap`, potem kolejność z `fallback_order`). Pasek pod przyciskami pokazuje, kto co robi, a `*` oznacza zmianę względem `agents.toml`. **⚙ Role** (F8) pozwala wybrać dowolnego agenta dla każdej roli i ustawić jego model, to samo robi `orchestra roles` w terminalu. Wybór zapisuje się w `.orchestra/roles.json` i obowiązuje od następnego przebiegu, także tych uruchomionych z Claude Code, OpenCode albo Codex. Słabszy planner gorzej dzieli zadania, taka jest cena braku mocnego modelu.
+
+**Własny provider albo model.** Dopisz dowolne CLI, które przyjmuje zadanie i edytuje pliki w bieżącym katalogu, w `~/.config/orchestra/agents.toml` (wszystkie repo) albo `<repo>/.orchestra/agents.toml` (jedno repo). Wpisy nakładają się na `agents.toml`:
+
+```toml
+[agents.mycli]
+headless = ["mycli", "run", "{task}", "--model", "{model}"]
+default_model = "local/llama"   # albo model_env = "MYCLI_MODEL"
+tier = "cheap"                  # "strong" robi z niego preferowanego plannera i recenzenta
+
+[roles]
+implementer = "mycli"
+```
+
+**Własny podział.** Możesz pominąć plannera: `orchestra init-plan plan.json`, edycja, potem `orchestra run plan.json` albo **▶ Plan** w TUI.
+
+| Klient | Stan |
+| --- | --- |
+| Claude Code | zweryfikowany end-to-end (przebieg, TUI, recenzja diffu) |
+| brak (samo TUI) | zweryfikowany end-to-end z plannerem i workerami Command Code, przy braku `claude` w PATH |
+| OpenCode | serwer MCP się łączy (`opencode mcp list`), wołanie narzędzi przez model niezweryfikowane (darmowy limit skończył się na maszynie testowej) |
+| Codex | podpięcie napisane według dokumentacji [MCP](https://developers.openai.com/codex/mcp) i [konfiguracji](https://developers.openai.com/codex/config-reference), pokryte tylko testami jednostkowymi, brak binarki do uruchomienia |
 
 ## Interfejs
 
@@ -70,10 +99,12 @@ Wszystko jest widoczne od razu, a każda akcja ma przycisk i F-klawisz (skróty 
 | Przycisk | Klawisz | Co robi |
 | --- | --- | --- |
 | ＋ Agent | Ctrl+N | nowa sesja agenta dowolnego typu z `agents.toml`, we własnym worktree |
-| ✉ Wiadomość | F3 | wiadomość do działającego agenta, dociera jako jego kolejny prompt |
+| ▶ Plan | F7 | cel dla roli planner albo własny plik planu, działa bez żadnego klienta |
+| ⚙ Role | F8 | który agent i model pełni rolę planner, reviewer, implementer |
+| ✉ Wiadom. | F3 | wiadomość do działającego agenta, dociera jako jego kolejny prompt |
 | ✎ Wskazówka | F4 | tekst dołączany do następnej próby workera wybranego zadania |
-| 🔎 Szczegóły | F5 | błąd, `test_cmd`, pełny wynik testów i pliki ostatniej próby |
-| ⛔ Anuluj przebieg | F6 | zabija pracujące workery i kończy przebieg (z potwierdzeniem) |
+| 🔎 Info | F5 | błąd, `test_cmd`, pełny wynik testów i pliki ostatniej próby |
+| ⛔ Anuluj | F6 | zabija pracujące workery i kończy przebieg (z potwierdzeniem) |
 | ± Diff | F2 | diff worktree zaznaczonego agenta |
 
 Zaznacz wiersz po lewej, a pole tekstowe zmienia znaczenie: dla agenta to prompt, dla zadania to wskazówka (podpowiedź pod logiem mówi, co się stanie).
@@ -112,6 +143,7 @@ Zadanie w `run_plan`: `id`, `description`, `files`, `acceptance`, `test_cmd` (ko
 - **Bramka testów:** `test_cmd` musi przejść, zanim gałąź zadania zostanie scalona. Konflikt scalenia liczy się jak porażka.
 - **Eskalacja:** po 2 kolejnych porażkach taniego workera zadanie dostaje jedną próbę od roli `planner` (w CLI `orchestra run`). W `run_plan` z Claude Code eskalacja jest wyłączona: nieudane zadanie wraca do Claude'a.
 - **Budżet:** limit tokenów (domyślnie 400 tys.) i opcjonalnie kosztu na zadanie, liczone z logu SQLite.
+- **Kontrola test_cmd:** gdy programu z `test_cmd` nie ma w PATH, zadanie zatrzymuje się, zanim worker zużyje tokeny.
 - **Błędy krytyczne** (zła konfiguracja, brak logowania, brak kredytów) kończą zadanie bez ponawiania i zatrzymują resztę przebiegu.
 - **Recenzent:** `review_rounds` 1 do 2 po zielonych testach. Badania nad debatą wieloagentową dają mieszane wyniki i wyższy koszt, więc domyślnie jest wyłączona.
 - **Środowisko:** worker `cmd` dostaje `--yolo`, bo izolacją jest worktree. Nie uruchamiaj go na repozytorium z sekretami, których worker nie powinien widzieć. SDK ACP przekazuje agentom okrojone środowisko, sekrety trzeba wymienić jawnie w `env_passthrough`.
@@ -126,10 +158,12 @@ Realny koszt: pojedyncza próba workera w prawdziwych zadaniach zużywa rzędu 5
 orchestra doctor [--smoke] [--model ID]        diagnostyka: cmd, logowanie, modele, headless, ACP, inni agenci
 orchestra plan "cel" [--out plan.json]         rola planner układa DAG zadań w JSON
 orchestra run plan.json [--parallel 2] [--rounds 0] [--token-budget 400000]
+orchestra roles [--set planner=AGENT] [--model AGENT=MODEL]   kto pełni które role (z fallbackiem)
+orchestra init-plan [plan.json]                szablon do ręcznego podziału zadań
 orchestra watch [--repo .]                     podgląd przebiegów na żywo (tylko odczyt)
 orchestra-tui --repo . --agents commandcode    TUI (--demo pokazuje agenty mock)
 orchestra-mcp                                  serwer MCP (stdio)
-orch [KATALOG] [--agents a,b] [--no-watch]     Claude Code + TUI w jednym oknie
+orch [KATALOG] [--client auto|claude|opencode|codex|none] [--agents a,b] [--no-watch]   klient + TUI w jednym oknie
 scripts/go.sh "cel" [--claude] [--plan-only]   plan i wykonanie jednym poleceniem, bez Claude Code
 ```
 
@@ -140,7 +174,7 @@ agents.toml           agenci, role, model workera
 .mcp.json             serwer MCP dla Claude Code uruchomionego w tym repo
 .agents/skills/       skille (orchestrate-hard-task, delegate-simple-tasks), .claude/skills to symlink
 src/orchestra/        scheduler, plan (DAG, pydantic), delegate, worktree, mcp_server, acp_client,
-                      controller, store (SQLite WAL), progress, tui, watch, doctor, node_env, cli
+                      controller, store (SQLite WAL), progress, tui, watch, doctor, node_env, clients, cli
 scripts/              setup.sh, orch, go.sh, make_screenshot.py (zrzuty do README)
 tests/                pytest, w tym zanonimizowane fixture'y z prawdziwego wyjścia cmd i claude
 ```
@@ -150,7 +184,7 @@ Stack: [Model Context Protocol](https://modelcontextprotocol.io) (FastMCP), [Age
 ## Testy i stan weryfikacji
 
 ```bash
-.venv/bin/pytest        # 107 testów
+.venv/bin/pytest        # 123 testy
 ```
 
 **Zweryfikowane na prawdziwym środowisku** (macOS, Node 22, `cmd` 1.93.2, `claude` 2.1.x):
@@ -158,12 +192,16 @@ Stack: [Model Context Protocol](https://modelcontextprotocol.io) (FastMCP), [Age
 - `run_plan` i `run_status` przez prawdziwy serwer MCP (stdio) z workerem `cmd`: 3 zadania, jedno zależne od dwóch pozostałych, wszystkie scalone, testy na gałęzi integracyjnej zielone.
 - Podpięcie serwera `orchestra` do sesji `cmd acp`: agent sam wywołał `list_agents` i `post_message`.
 - Planista Claude (`claude -p`) zwraca poprawny DAG, a worker go realizuje end-to-end.
+- `orch` przez prawdziwy Claude Code w tmux: 3 równoległe zadania, TUI na żywo, diff zrecenzowany przez Claude'a, 17 testów zielonych na gałęzi integracyjnej.
+- Zupełnie bez Claude'a (`claude` poza PATH): `orch` otwiera samo TUI, role planner i reviewer przechodzą na Command Code, cel wpisany w **▶ Plan** rozbity na 4 zadania i wszystkie 4 scalone, testy zielone.
+- OpenCode łączy się z serwerem MCP `orchestra`.
 
 **Zweryfikowane testami** (mocki i zanonimizowane nagrania): parser NDJSON `cmd` i `claude`, kody wyjścia, doctor, walidacja DAG-a, scheduler (równoległość, scalanie, bramka testów, eskalacja, budżet, konflikt scalenia, błąd krytyczny, anulowanie, wskazówki), `cwd` zadania, serwer MCP, klient ACP, TUI (przyciski, okna dialogowe, przekazywanie wiadomości z limitem).
 
 **Niezweryfikowane:**
 - Runda recenzji na prawdziwym Claude (`review_rounds`): tylko mocki.
-- `codex`, `codex-acp` i `agy`: brak binarek, checki są pomijane.
+- `codex`, `codex-acp` i `agy`: brak binarek, checki są pomijane. Podpięcie launchera dla Codex ma tylko testy jednostkowe.
+- OpenCode jako model sterujący albo worker: darmowy limit skończył się na maszynie testowej.
 - Koszt w USD workera: `cmd` go nie raportuje, więc kolumna `$` dla niego jest zerowa.
 - Interaktywna sesja Claude Code wołająca `run_plan` na dużym, prawdziwym repozytorium.
 

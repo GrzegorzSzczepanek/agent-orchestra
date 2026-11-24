@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parent.parent
 def test_load_repo_config():
     cfg = load_config(ROOT / "agents.toml")
     assert set(cfg.agents) >= {"claude", "codex", "antigravity", "opencode", "commandcode"}
-    assert cfg.agent_for_role("implementer").name == "commandcode"
+    assert cfg.roles["implementer"] == "commandcode"  # agent_for_role zależy od zainstalowanych binarek
     assert cfg.agents["commandcode"].acp == ("cmd", "acp")
 
 

@@ -74,9 +74,31 @@ def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:30] or "task"
 
 
+def ensure_local_exclude(repo: str | Path, pattern: str = ".orchestra/") -> None:
+    """Dopisuje .orchestra/ do .git/info/exclude (lokalnie, bez zmian w repo użytkownika), chyba że już jest ignorowane."""
+    import subprocess
+
+    try:
+        repo = Path(repo)
+        gitignore = repo / ".gitignore"
+        if gitignore.is_file() and pattern.rstrip("/") in gitignore.read_text(encoding="utf-8").split():
+            return
+        out = subprocess.run(["git", "rev-parse", "--git-path", "info/exclude"], cwd=repo, capture_output=True,
+                             text=True, check=True).stdout.strip()
+        path = Path(out) if Path(out).is_absolute() else repo / out
+        existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+        if pattern in existing.split():
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(existing + ("" if not existing or existing.endswith("\n") else "\n") + pattern + "\n", encoding="utf-8")
+    except Exception:  # noqa: BLE001 - ignorowanie to wygoda, nie warunek działania
+        pass
+
+
 async def create_worktree(repo: str | Path, name: str = "task", base: str = "HEAD") -> Worktree:
     """Tworzy worktree na nowej gałęzi orchestra/<slug>-<id> w <repo>/.orchestra/worktrees."""
     repo = Path(repo).resolve()
+    ensure_local_exclude(repo)
     base_sha = (await git(["rev-parse", base], repo)).strip()
     ident = f"{_slug(name)}-{uuid.uuid4().hex[:6]}"
     branch = f"orchestra/{ident}"

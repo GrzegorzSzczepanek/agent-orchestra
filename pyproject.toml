@@ -20,6 +20,7 @@ dev = ["pytest>=9", "pytest-asyncio>=1.5"]
 orchestra = "orchestra.cli:main"
 orchestra-mcp = "orchestra.mcp_server:main"
 orchestra-tui = "orchestra.tui:main"
+orchestra-client = "orchestra.clients:main"
 
 [build-system]
 requires = ["hatchling"]

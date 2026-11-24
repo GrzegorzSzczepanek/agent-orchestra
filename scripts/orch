@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Globalny launcher: orch [KATALOG] [--no-watch] [--simple-watch] [--agents a,b] [-- argumenty claude]
-# Odpala Claude Code w repo (domyslnie biezacy katalog) z serwerem orchestra i skillem rozbijania zadan,
+# Globalny launcher: orch [KATALOG] [--client auto|claude|opencode|codex|none] [--no-watch] [--simple-watch] [--agents a,b] [-- argumenty klienta]
+# Odpala klienta (domyslnie pierwszy znaleziony: claude, opencode, codex) w repo z serwerem orchestra i skillem rozbijania zadan,
 # a obok otwiera TUI (orchestra-tui): agenci, strumien, prompt, Ctrl+N nowy agent, F2 diff. Panele w tmux (poza tmux orch sam startuje sesje tmux), bez tmux nowe okno Terminal.app.
-# --simple-watch: tylko podglad zadan run_plan (bez promptow), --agents: sesje startowane od razu (domyslnie commandcode).
-# Nic nie trzeba rejestrowac globalnie: serwer MCP jest podawany przez --mcp-config.
+# Bez zadnego klienta (--client none albo nic w PATH) startuje samo TUI: przycisk Plan przyjmuje cel (planuje wybrany agent) albo plik planu.
+# --simple-watch: tylko podglad zadan run_plan (bez promptow), --agents: sesje startowane od razu (domyslnie pierwszy dostepny z agents.toml).
+# Nic nie trzeba rejestrowac globalnie: serwer MCP jest podawany klientowi przy starcie.
 set -euo pipefail
 
 SELF="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}")"
@@ -14,23 +15,24 @@ ORIG_ARGS=("$@")
 REPO="$PWD"
 WATCH=1
 SIMPLE=0
-AGENTS=commandcode
-CLAUDE_ARGS=()
+AGENTS=""
+CLIENT=auto
+CLIENT_ARGS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-watch) WATCH=0; shift ;;
     --simple-watch) SIMPLE=1; shift ;;
     --agents) AGENTS="${2:?brak wartosci dla --agents}"; shift 2 ;;
-    -h|--help) sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    --) shift; CLAUDE_ARGS=("$@"); break ;;
-    -*) echo "Nieznana opcja: $1 (argumenty dla claude po --)" >&2; exit 2 ;;
+    --client) CLIENT="${2:?brak wartosci dla --client}"; shift 2 ;;
+    -h|--help) sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --) shift; CLIENT_ARGS=("$@"); break ;;
+    -*) echo "Nieznana opcja: $1 (argumenty dla klienta po --)" >&2; exit 2 ;;
     *) REPO="$1"; shift ;;
   esac
 done
 
 [[ -x "$BIN/orchestra-mcp" ]] || { echo "Brak .venv w $ROOT. Uruchom: $ROOT/scripts/setup.sh" >&2; exit 1; }
-command -v claude >/dev/null || { echo "Brak polecenia claude w PATH" >&2; exit 1; }
 REPO="$(cd "$REPO" && pwd)"
 git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 || { echo "To nie jest repozytorium git: $REPO (git init, potem commit)" >&2; exit 1; }
 git -C "$REPO" rev-parse HEAD >/dev/null 2>&1 || { echo "Repo nie ma zadnego commita, workery startuja z HEAD." >&2; exit 1; }
@@ -38,13 +40,12 @@ if [[ -n "$(git -C "$REPO" status --porcelain 2>/dev/null)" ]]; then
   echo "Uwaga: sa niezacommitowane zmiany. Workery widza tylko HEAD." >&2
 fi
 
-MCP_JSON="$(python3 - "$BIN/orchestra-mcp" "$REPO" "$ROOT/agents.toml" <<'PY'
-import json, sys
-cmd, repo, cfg = sys.argv[1:4]
-print(json.dumps({"mcpServers": {"orchestra": {"command": cmd, "args": [],
-      "env": {"ORCHESTRA_REPO": repo, "ORCHESTRA_CONFIG": cfg}}}}))
-PY
-)"
+CONFIG="$ROOT/agents.toml"
+CLIENT="$("$BIN/orchestra-client" --detect --client "$CLIENT" --repo "$REPO" --config "$CONFIG" --skill "$SKILL")" || exit $?
+if [[ "$CLIENT" == none ]]; then
+  echo "Nie znaleziono klienta (claude, opencode, codex): uruchamiam samo TUI. Przycisk Plan: wpisz cel albo wskaz plik planu." >&2
+  exec "$BIN/orchestra-tui" --repo "$REPO" --config "$CONFIG" ${AGENTS:+--agents "$AGENTS"}
+fi
 
 # Poza tmux: odpal siebie w nowej sesji tmux (Claude po lewej, TUI po prawej), wszystko w jednym oknie terminala.
 if [[ $WATCH -eq 1 && -z "${TMUX:-}" ]] && command -v tmux >/dev/null && [[ -t 0 ]]; then
@@ -59,7 +60,7 @@ if [[ $WATCH -eq 1 ]]; then
   if [[ $SIMPLE -eq 1 ]]; then
     WATCH_CMD="cd '$REPO' && '$BIN/orchestra' watch --repo '$REPO'"
   else
-    WATCH_CMD="cd '$REPO' && '$BIN/orchestra-tui' --repo '$REPO' --config '$ROOT/agents.toml' --agents '$AGENTS'"
+    WATCH_CMD="cd '$REPO' && '$BIN/orchestra-tui' --repo '$REPO' --config '$CONFIG' ${AGENTS:+--agents '$AGENTS'}"
   fi
   if [[ -n "${TMUX:-}" ]]; then
     tmux split-window -h -d -l 45% -t "${TMUX_PANE:-}" "$WATCH_CMD"
@@ -71,10 +72,4 @@ if [[ $WATCH -eq 1 ]]; then
   fi
 fi
 
-cd "$REPO"
-exec claude --mcp-config "$MCP_JSON" \
-  --allowedTools "mcp__orchestra__delegate" "mcp__orchestra__run_plan" "mcp__orchestra__run_status" \
-  --append-system-prompt "Masz serwer MCP orchestra (workery tanimi modelami). Przy trudnych zadaniach, ktore da sie rozbic, postepuj wedlug ponizszego skilla.
-
-$(awk 'f>=2{print} /^---$/{f++}' "$SKILL")" \
-  "${CLAUDE_ARGS[@]}"
+exec "$BIN/orchestra-client" --client "$CLIENT" --repo "$REPO" --config "$CONFIG" --skill "$SKILL" ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"}

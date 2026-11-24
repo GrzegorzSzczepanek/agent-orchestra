@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from .config import load_config
+from .worktree import ensure_local_exclude
 
 
 def _add_common(p: argparse.ArgumentParser) -> None:
@@ -30,6 +31,17 @@ def build_parser() -> argparse.ArgumentParser:
     w = sub.add_parser("watch", help="podgląd na żywo przebiegów i delegowań (TUI, tylko odczyt)")
     w.add_argument("--repo", default=".", help="repozytorium, którego log zdarzeń oglądasz")
     w.add_argument("--db", default=None, help="ścieżka bazy zdarzeń (domyślnie <repo>/.orchestra/events.db)")
+
+    ro = sub.add_parser("roles", help="kto pełni role planner, reviewer, implementer (z fallbackiem) i zmiana wyboru")
+    _add_common(ro)
+    ro.add_argument("--repo", default=".")
+    ro.add_argument("--set", action="append", default=[], metavar="ROLA=AGENT",
+                    help="wybierz agenta roli, np. planner=opencode (pusta wartość kasuje wybór)")
+    ro.add_argument("--model", action="append", default=[], metavar="AGENT=MODEL",
+                    help="model agenta, np. opencode=opencode/big-pickle (pusta wartość kasuje wybór)")
+
+    ip = sub.add_parser("init-plan", help="zapisz szablon planu JSON do ręcznego podziału zadań (potem: orchestra run)")
+    ip.add_argument("out", nargs="?", default="plan.json")
 
     pl = sub.add_parser("plan", help="rola planner układa plan zadań (DAG) w JSON")
     _add_common(pl)
@@ -60,8 +72,11 @@ def cmd_plan(args: argparse.Namespace) -> int:
     from .agents_io import acp_ask, headless_ask, repo_files
     from .plan import PlanError, make_plan
     from .store import EventStore
+    from .worktree import ensure_local_exclude
 
-    cfg, repo = load_config(args.config), Path(args.repo).resolve()
+    repo = Path(args.repo).resolve()
+    ensure_local_exclude(repo)
+    cfg = load_config(args.config, repo=repo)
     store = EventStore(repo / ".orchestra" / "events.db")
     ask = (acp_ask(cfg, "planner", repo, store) if args.via == "acp"
            else headless_ask(cfg, "planner", repo, model=args.model, store=store))
@@ -89,8 +104,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     from .plan import Plan
     from .scheduler import RunOptions, run_plan
     from .store import EventStore
+    from .worktree import ensure_local_exclude
 
-    cfg, repo = load_config(args.config), Path(args.repo).resolve()
+    repo = Path(args.repo).resolve()
+    ensure_local_exclude(repo)
+    cfg = load_config(args.config, repo=repo)
     plan = Plan.model_validate_json(Path(args.plan).read_text(encoding="utf-8"))
     store = EventStore(repo / ".orchestra" / "events.db")
     opts = RunOptions(parallel=args.parallel, max_failures=args.max_failures, escalate=not args.no_escalate,
@@ -105,6 +123,65 @@ def cmd_run(args: argparse.Namespace) -> int:
     out.write_text(json.dumps(report.to_dict(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"\nRaport: {out}\nPrzejrzyj i scal: git log --oneline {report.integration_branch}")
     return 0 if report.ok else 1
+
+
+PLAN_TEMPLATE = {
+    "goal": "Opis całego celu jednym zdaniem",
+    "tasks": [
+        {"id": "modul-a", "description": "Samowystarczalny opis: pliki, sygnatury, oczekiwane zachowanie.",
+         "files": ["src/modul_a.py", "tests/test_modul_a.py"], "acceptance": ["test_cmd przechodzi"],
+         "test_cmd": "pytest -q tests/test_modul_a.py", "cwd": "", "difficulty": "easy", "depends_on": []},
+        {"id": "modul-b", "description": "Zadanie zależne od modul-a (startuje po jego scaleniu).",
+         "files": ["src/modul_b.py", "tests/test_modul_b.py"], "acceptance": ["test_cmd przechodzi"],
+         "test_cmd": "pytest -q tests/test_modul_b.py", "cwd": "", "difficulty": "medium", "depends_on": ["modul-a"]},
+    ],
+}
+
+
+def cmd_init_plan(args: argparse.Namespace) -> int:
+    import json
+
+    from .plan import Plan
+
+    out = Path(args.out)
+    if out.exists():
+        print(f"{out} już istnieje, nic nie nadpisuję.", file=sys.stderr)
+        return 1
+    Plan.model_validate(PLAN_TEMPLATE)  # szablon ma być zawsze poprawny
+    out.write_text(json.dumps(PLAN_TEMPLATE, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"Szablon planu: {out.resolve()}\nEdytuj i uruchom: orchestra run {out} --repo .  (albo przycisk Plan w TUI)")
+    return 0
+
+
+def cmd_roles(args: argparse.Namespace) -> int:
+    from .config import save_overrides
+
+    repo = Path(args.repo).resolve()
+    cfg = load_config(args.config, repo=repo)
+    try:
+        roles = dict(item.split("=", 1) for item in args.set)
+        models = dict(item.split("=", 1) for item in args.model)
+    except ValueError:
+        print("Użycie: --set rola=agent, --model agent=model", file=sys.stderr)
+        return 2
+    bad = [r for r in roles if r not in ("planner", "reviewer", "implementer")] + \
+          [a for a in [*roles.values(), *models] if a and a not in cfg.agents]
+    if bad:
+        print(f"Nieznane: {', '.join(bad)}. Agenci: {', '.join(cfg.agents)}", file=sys.stderr)
+        return 2
+    if roles or models:
+        ensure_local_exclude(repo)
+        save_overrides(repo, roles=roles, models=models)
+        cfg.reload_overrides(repo)
+    for role in ("planner", "reviewer", "implementer"):
+        info = cfg.role_info(role)
+        note = f"  ({info.reason}; w agents.toml: {info.configured})" if info.changed else ""
+        print(f"{role:12} {info.effective}{note}")
+    print("\nAgenci:")
+    for name, agent in cfg.agents.items():
+        model = agent.resolve_model() or "-"
+        print(f"  {name:12} {'zainstalowany' if agent.is_available() else 'brak w PATH':14} {agent.tier:7} model: {model}")
+    return 0
 
 
 def cmd_watch(args: argparse.Namespace) -> int:
@@ -131,7 +208,8 @@ def main(argv: list[str] | None = None) -> int:
 
     ensure_node()
     args = build_parser().parse_args(argv)
-    handlers = {"doctor": cmd_doctor, "plan": cmd_plan, "run": cmd_run, "watch": cmd_watch}
+    handlers = {"doctor": cmd_doctor, "plan": cmd_plan, "run": cmd_run, "watch": cmd_watch,
+                "roles": cmd_roles, "init-plan": cmd_init_plan}
     handler = handlers.get(args.command)
     if handler is None:  # pragma: no cover
         return 2
