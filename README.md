@@ -4,7 +4,7 @@ Orkiestrator agentów kodujących z hierarchią kosztową. Mocny model (Claude) 
 
 ## Szybki start (5 kroków)
 
-1. **Instalacja:** `scripts/setup.sh` (tworzy `.venv`, instaluje pakiet, pyta o `npm i -g command-code`, na końcu uruchamia diagnostykę). Dodaj `--yes`, żeby nie pytało o npm.
+1. **Instalacja:** `scripts/setup.sh` (tworzy `.venv`, instaluje pakiet, pyta o `npm i -g command-code`, na końcu uruchamia diagnostykę). Dodaj `--yes`, żeby nie pytało o npm. Dla roli planisty doinstaluj pod tym samym Node: `npm i -g @anthropic-ai/claude-code @agentclientprotocol/claude-agent-acp` (adapter wymaga Node >=22; nvm trzyma globalne paczki osobno dla każdej wersji Node, więc po `nvm use` zainstaluj ponownie).
 2. **Logowanie (ręcznie):** `cmd login` (otwiera przeglądarkę). Na serwerze bez przeglądarki zamiast tego `export COMMAND_CODE_API_KEY=...`.
 3. **Model:** `cmd --list-models`, potem `export ORCHESTRA_CMD_MODEL=<id z listy>`, np. `deepseek/deepseek-v4.1-flash`. Pełne ID albo część po ostatnim `/` (`glm-5.3-flash`), wielkość liter nie ma znaczenia. Bez modelu worker zwraca jasny błąd konfiguracji.
 4. **Test na żywo:** `.venv/bin/orchestra doctor --smoke` (jedno zapytanie, zużywa kilka groszy kredytów). Wklej zawartość `orchestra-doctor.json` do rozmowy z Claude: raport nie zawiera sekretów (maskowane są `COMMAND_CODE_API_KEY`, tokeny i wzorce kluczy), więc dopasuję parser i konfigurację do tego, co faktycznie zwraca Twoje konto.
@@ -52,25 +52,34 @@ AGENTS.md, CLAUDE.md        wspólne instrukcje (CLAUDE.md importuje @AGENTS.md)
 src/orchestra/              commandcode, delegate, mcp_server, acp_client, store, doctor, plan, scheduler,
                             agents_io, controller, tui, cli
 scripts/setup.sh            instalacja i diagnostyka
-tests/                      pytest (71 testów), fixtures z prawdziwego wyjścia cmd 1.93.2
+tests/                      pytest (79 testów), fixtures z prawdziwego wyjścia cmd 1.93.2 i claude 2.1.331
 ```
+
+## Narzut tokenów i próg delegowania
+
+- Stały narzut wejścia `cmd -p` na krótkim promptcie (cmd 1.93.2, deepseek-v4.1-flash): 15261 tokenów, z czego 5888 to cache read. Po dodaniu `--no-skills --safe-mode` spada do 13825 tokenów, bo katalog skilli i mody nie trafiają do kontekstu. Te flagi są już w `agents.toml`, dotyczą tylko trybu headless.
+- Nie ma flagi wyłączającej bazowy system prompt, definicje narzędzi ani pamięć `AGENTS.md`. Pamięć jest częścią systemu promptu i kosztuje na każdym żądaniu, więc w worktree repo z dużym `AGENTS.md` narzut rośnie. `--no-skills` nie usuwa pamięci.
+- Przy rozliczaniu per token DeepSeek V4.1 Flash jest około 20 razy tańszy od Claude Sonnet 4.6 ($0.15/$0.6 vs $3/$15 za 1M). Nawet zmierzony przebieg zużywający 202 tys. tokenów workera i planisty kosztuje około 0.03 USD, więc delegowanie opłaca się dla każdego zadania z jasnym `test_cmd`, które nie wymaga dyskusji. Przy subskrypcji Claude koszt krańcowy to limity planu, nie dolary: deleguj zadania ograniczone do 1-3 plików z konkretnym testem, a planowanie, projektowanie i recenzję zostaw mocnemu modelowi.
+- Zmierzone przebiegi: proste zadanie z ręcznym planem 63972/462 tokenów workera (około 0.010 USD), to samo zadanie z planistą `cmd` 29404/521 tokenów planisty i 173288/4262 workera (około 0.033 USD razem, bez rabatu cache).
 
 ## Zweryfikowane vs niezweryfikowane
 
-**Zweryfikowane na prawdziwym `cmd` 1.93.2** (zainstalowanym z npm w środowisku budowy, bez konta, więc bez logowania):
-- Instalacja `npm i -g command-code` (Node 22), `cmd --help`, `cmd acp --help`.
-- `cmd --list-models` działa bez logowania i zwraca 105 modeli plus sekcję `Decision models (headless only)`, którą pomijamy. Prawdziwe wyjście jest fixture'em testów. Model `deepseek/deepseek-v4.1-flash` istnieje i jest domyślny.
-- `cmd status` bez logowania zwraca kod 1. `cmd -p ... --output-format json` bez logowania zwraca kod 3 i jedną linię `{"type":"result","subtype":"error",...,"usage":{inputTokens,outputTokens,cacheReadTokens,cacheWriteTokens},"durationMs","finalText","error"}`. Flagi `--skip-onboarding`, `--yolo`, `--max-turns` są akceptowane.
-- `cmd acp` przez oficjalne SDK: `initialize` działa bez logowania (Command Code 1.93.2, protokół v1, `mcp_capabilities.http=true`, `sse=false`, metoda logowania `terminal`), a `session/new` bez logowania kończy się błędem "Not authenticated". Okrojone środowisko procesu ACP jest sprawdzone testem.
-- `orchestra doctor` uruchomiony przeciwko prawdziwemu `cmd` (bez logowania) poprawnie zgłasza PASS dla binarki, listy modeli i ACP initialize oraz FAIL dla logowania i `session/new`.
+**Zweryfikowane na prawdziwym środowisku** (macOS, Node 22.23.5, `cmd` 1.93.2, `claude` 2.1.331, `claude-agent-acp` 0.110.1, `opencode` 1.14.25):
+- `orchestra doctor`: 10 PASS, 0 FAIL, 5 SKIP. PASS dla `cmd` (logowanie, 105 modeli, ACP initialize i `session/new`), dla `claude-agent-acp` ACP initialize oraz dla `opencode` ACP initialize. SKIP dla `codex` i `agy`, których nie ma w PATH.
+- `cmd -p --output-format json` po zalogowaniu zwraca 11 ramek `event` i końcową linię `result` (`subtype: success`, `usage.inputTokens`, `outputTokens`, `cacheReadTokens`, `sessionId`, `stopReason`, `finalText`). Prawdziwe wyjście jest fixture'em testów, podobnie jak odpowiedź bez logowania.
+- `cmd acp` zwraca `usage` w odpowiedzi na prompt: w TUI widać tokeny 17157/3. Nie zgłasza natomiast kosztu w USD, więc kolumna `$` pozostaje zerowa.
+- TUI (`orchestra-tui`) na repo testowym z prawdziwym `cmd acp`: tabela agentów, status, strumień zdarzeń, treść odpowiedzi i tokeny działają. Do poprawy: brak wyliczania kosztu z cennika oraz fragmenty strumienia mogą łamać się na granicy odpytywania.
+- Planowanie i wykonanie od końca do końca (planner tymczasowo `cmd`, bo konto Claude ma wyczerpany limit): planista zwrócił poprawny DAG z jednym zadaniem, worker `cmd` zaimplementował funkcję, bramka `pytest` przeszła, gałąź scalona `--no-ff` do `orchestra/run-<id>`, testy na gałęzi integracyjnej zielone (4 passed). Log SQLite zawiera teraz `role_attempt` planisty i `task_attempt` workera.
+- `claude -p --output-format json` przy wyczerpanym limicie konta zwraca kod 0, `subtype: success`, `is_error: true` i `api_error: usage_limit_reached`. Parser i `headless_ask` traktują to jako błąd roli z czytelnym komunikatem (wcześniej limit wyglądał jak poprawna odpowiedź). Prawdziwa odpowiedź jest fixture'em testów.
+- Doctor przy crashu `cmd` (stack trace z `cli.mjs`) odczytuje `engines.node` z pakietu npm i wypisuje `wymagany Node >=N, masz vX`, zamiast wstawiać surową linię błędu jako wersję.
 
-**Zweryfikowane testami (71, pytest)** na mockowych binarkach i agentach: parser NDJSON (zdarzenia, nieznane ramki, błędne linie, brak pól opcjonalnych, format `claude -p`), mapowanie kodów wyjścia, wymóg modelu, doctor (PASS, FAIL, SKIP, WARN, maskowanie sekretów), planista i walidacja DAG-a, scheduler (równoległość, scalanie do gałęzi integracyjnej, bramka testów, eskalacja, blokowanie zależnych, budżet tokenów, limit rund, konflikt scalenia, błąd krytyczny), CLI `plan` i `run` od końca do końca, serwer MCP, klient ACP, TUI (Pilot).
+**Zweryfikowane testami (79, pytest)** na mockowych binarkach i agentach oraz na prawdziwych, zanonimizowanych fixture'ach: parser NDJSON (ramki event, wynik sukcesu i błędu, nieznane ramki, błędne linie, format `claude -p`, `is_error` przy `subtype: success`), mapowanie kodów wyjścia, wymóg modelu, doctor (PASS, FAIL, SKIP, WARN, crash Node, maskowanie sekretów), planista i walidacja DAG-a, scheduler (równoległość, scalanie do gałęzi integracyjnej, bramka testów, eskalacja, blokowanie zależnych, budżet tokenów, limit rund, konflikt scalenia, błąd krytyczny), CLI `plan` i `run` od końca do końca, logowanie zużycia ról, serwer MCP, klient ACP, TUI (Pilot).
 
-**Niezweryfikowane, wymaga Twojego konta lub agentów** (wklej raport z `orchestra doctor --smoke`):
-- Udana odpowiedź `cmd -p` po zalogowaniu: kształt ramek `event` i linii wyniku przy `subtype: success` (parser zakłada pola z dokumentacji i ignoruje nieznane) oraz to, czy plan Go w ogóle obejmuje headless i ACP.
-- Czy `cmd acp` zwraca `usage` w `PromptResponse` (dokumentacja tego nie obiecuje, kolumny tokenów w TUI mogą zostać zerowe). W trybie headless tokeny są w linii wyniku.
+**Niezweryfikowane**:
+- Planista i recenzent przez Claude od końca do końca: konto użyte do testów ma wyczerpany miesięczny limit wydatków (`usage_limit_reached`), więc DAG od Claude nie powstał. ACP initialize i instalacja adaptera są sprawdzone. Po podniesieniu limitu wystarczy `orchestra plan` i `orchestra run`.
+- `codex`, `codex-acp` i `agy`: brak binarek w PATH, wszystkie checki SKIP. Komendy headless `codex exec`, `agy -p` i `opencode run` nie były uruchamiane.
 - Kod wyjścia `cmd` przy nieznanym modelu (komunikat błędu zweryfikowany, kod nie).
-- `claude-agent-acp`, `codex-acp`, `agy acp`, `opencode acp` oraz komendy headless `agy -p`, `codex exec`, `opencode run`. Format `claude -p --output-format json` (pole `result`, `total_cost_usd`) pochodzi z dokumentacji, nie z uruchomienia. Domyślne `env_passthrough` dla nich jest puste.
+- Koszt w USD: `cmd` go nie raportuje, więc tabele kosztów w README to szacunek z cennika modeli, bez rabatu cache.
 - Regulamin: uruchamianie niezmodyfikowanego `claude` na własnym koncie jest zgodne z dokumentacją Anthropic według raportu research, ale strona Legal and compliance zmienia się często, więc sprawdź ją przed publikacją narzędzia.
 
 ## TODO
@@ -79,5 +88,6 @@ tests/                      pytest (71 testów), fixtures z prawdziwego wyjścia
 - Sandbox Docker dla trybów YOLO.
 - Kontynuacja pracy w tym samym worktree po uwagach recenzenta (teraz nowa próba startuje od czystego worktree z poprzednim patchem w prompcie).
 - Koszt w USD liczony z cennika modeli (teraz tylko z danych agenta).
+- Powtórzyć planowanie i recenzję przez Claude po podniesieniu limitu konta i dopisać zmierzony DAG do tabeli.
 - Podgląd przebiegu `orchestra run` w TUI (zdarzenia scheduler i `task_attempt` trafiają już do wspólnego logu).
 - Fragmenty strumienia odpowiedzi dzielące się na granicy odpytywania mogą zostać wypisane w osobnych liniach.

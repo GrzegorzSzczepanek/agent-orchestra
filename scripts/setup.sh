@@ -23,7 +23,7 @@ else
 fi
 echo "OK: $(.venv/bin/orchestra --help >/dev/null 2>&1 && echo 'polecenie orchestra działa')"
 
-say "2/4 Command Code (cmd)"
+say "2/4 Agenci (cmd, Claude Code i adapter ACP)"
 if command -v cmd >/dev/null 2>&1; then
   echo "cmd znaleziony: $(cmd --version 2>/dev/null | head -1)"
 else
@@ -45,6 +45,14 @@ else
       echo "Pominięto. Zainstaluj później: npm i -g command-code"
     fi
   fi
+fi
+
+if command -v claude >/dev/null 2>&1 && command -v claude-agent-acp >/dev/null 2>&1; then
+  echo "Claude Code: $(claude --version 2>/dev/null | head -1), adapter ACP: $(claude-agent-acp --version 2>/dev/null | head -1)"
+else
+  echo "Brak Claude Code lub adaptera ACP. Pod tym samym Node (adapter wymaga >=22):"
+  echo "  npm i -g @anthropic-ai/claude-code @agentclientprotocol/claude-agent-acp"
+  echo "nvm trzyma globalne paczki osobno dla każdej wersji Node, więc po nvm use zainstaluj ponownie."
 fi
 
 say "3/4 Kroki ręczne (wymagają Ciebie)"
