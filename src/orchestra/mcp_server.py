@@ -50,7 +50,8 @@ def build_server(config: Config | None = None, repo: str | Path | None = None) -
         )
         usage = result.usage or {}
         store.add_event(f"worker:{result.worker or worker}", "delegate",
-                        {"status": result.status, "branch": result.branch, "exit_code": result.worker_exit_code},
+                        {"status": result.status, "branch": result.branch, "exit_code": result.worker_exit_code,
+                         "cache_read": int(usage.get("cache_read", 0)), "cache_write": int(usage.get("cache_write", 0))},
                         tokens_in=int(usage.get("tokens_in", 0)), tokens_out=int(usage.get("tokens_out", 0)),
                         cost=float(result.cost_usd))
         return result.to_dict()

@@ -157,3 +157,24 @@ def test_cli_plan_fails_cleanly_on_bad_plan(git_repo: Path, tmp_path: Path, caps
         'import json\nprint(json.dumps({"type":"result","subtype":"success","usage":{},"durationMs":1,"finalText":"nie json"}))\n')
     rc = main(["plan", "cel", "--config", str(cfg), "--repo", str(git_repo), "--out", str(tmp_path / "p.json")])
     assert rc == 1 and "Błąd planowania" in capsys.readouterr().err
+
+
+async def test_role_attempt_logs_cache_tokens_from_real_claude_fixture(git_repo: Path, tmp_path: Path):
+    """Realny `claude -p` 2.1.331: input_tokens to tylko 2, resztę niosą pola cache (bez nich koszt wygląda na zero)."""
+    fixture = Path(__file__).parent / "fixtures" / "claude_result_real_2_1_331.json"
+    script = tmp_path / "claude_real.py"
+    script.write_text(f"import sys\nsys.stdout.write(open({str(fixture)!r}).read())\n")
+    store = EventStore(":memory:")
+    agent = AgentConfig(name="p", headless=(sys.executable, str(script), "{task}"))
+    await headless_ask(Config(agents={"p": agent}, roles={"planner": "p"}), "planner", git_repo, store=store)("x")
+    (ev,) = store.events(agent="role:planner")
+    assert (ev.tokens_in, ev.tokens_out) == (2, 4) and abs(ev.cost - 0.0369469) < 1e-9
+    assert ev.payload["cache_read"] == 11309 and ev.payload["cache_write"] == 8943
+
+
+def test_parse_real_cmd_result_fixture():
+    from orchestra.commandcode import parse_headless_output
+
+    hr = parse_headless_output((Path(__file__).parent / "fixtures" / "cmd_result_real_1_93_2.ndjson").read_text())
+    assert hr.subtype == "success" and hr.final_text == "ok"
+    assert hr.usage == {"tokens_in": 15259, "tokens_out": 38, "cache_read": 5888, "cache_write": 0}

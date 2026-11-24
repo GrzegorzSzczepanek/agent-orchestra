@@ -41,7 +41,8 @@ def headless_ask(
         if store is None:
             return
         usage = (hr.usage if hr else {}) or {}
-        store.add_event(f"role:{role}", "role_attempt", {"role": role, "status": status},
+        store.add_event(f"role:{role}", "role_attempt", {"role": role, "status": status, "cache_read": int(usage.get("cache_read", 0)),
+                         "cache_write": int(usage.get("cache_write", 0))},
                         tokens_in=int(usage.get("tokens_in", 0)), tokens_out=int(usage.get("tokens_out", 0)),
                         cost=float(hr.cost_usd if hr else 0.0))
 

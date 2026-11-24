@@ -237,7 +237,9 @@ class Scheduler:
             out.attempts.append(attempt)
             self.store.add_event(f"worker:{worker}", "task_attempt",
                                  {"run_id": self.run_id, "task_id": task.id, "attempt": len(out.attempts),
-                                  "status": res.status, "escalated": escalated},
+                                  "status": res.status, "escalated": escalated,
+                                  "cache_read": int(res.usage.get("cache_read", 0)),
+                                  "cache_write": int(res.usage.get("cache_write", 0))},
                                  tokens_in=tok_in, tokens_out=tok_out, cost=float(res.cost_usd))
 
             status, feedback, prev_diff = res.status, "", ""
