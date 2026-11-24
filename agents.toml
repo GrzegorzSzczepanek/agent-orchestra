@@ -40,7 +40,8 @@ tier = "cheap"
 description = "Command Code (commandcode.ai), plan Go działa tylko przez CLI"
 acp = ["cmd", "acp"]
 env_passthrough = ["COMMAND_CODE_API_KEY", "CMD_ZDR", "CMD_LOCAL_ONLY"]
-headless = ["cmd", "-p", "{task}", "--model", "{model}", "--output-format", "json", "--max-turns", "30", "--yolo", "--skip-onboarding"]
+# --no-skills i --safe-mode obcinają stały narzut wejścia (katalog skilli i mody). Pomiar: 15261 -> 13825 tokenów.
+headless = ["cmd", "-p", "{task}", "--model", "{model}", "--output-format", "json", "--max-turns", "30", "--yolo", "--skip-onboarding", "--no-skills", "--safe-mode"]
 # Model: ID z `cmd --list-models` (pełne albo część po ostatnim "/"). Brak modelu to jasny błąd.
 # Ustaw zmienną ORCHESTRA_CMD_MODEL albo wpisz default_model, np. "deepseek/deepseek-v4.1-flash".
 model_env = "ORCHESTRA_CMD_MODEL"
