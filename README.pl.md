@@ -71,6 +71,10 @@ Claude jest domyślny, ale nie wymagany. Wszystko ma fallback i wszystko da się
 
 **Role z fallbackiem.** `planner`, `reviewer` i `implementer` wskazują agentów z `agents.toml`. Jeśli wskazany agent nie jest zainstalowany, rola przechodzi na pierwszego dostępnego (planner i reviewer wolą poziom `strong`, worker `cheap`, potem kolejność z `fallback_order`). Pasek pod przyciskami pokazuje, kto co robi, a `*` oznacza zmianę względem `agents.toml`. **⚙ Role** (F8) pozwala wybrać dowolnego agenta dla każdej roli i ustawić jego model, to samo robi `orchestra roles` w terminalu. Wybór zapisuje się w `.orchestra/roles.json` i obowiązuje od następnego przebiegu, także tych uruchomionych z Claude Code, OpenCode albo Codex. Słabszy planner gorzej dzieli zadania, taka jest cena braku mocnego modelu.
 
+![Pasek ról z fallbackiem i okno Role](docs/tui-roles.png)
+
+Zrzut pochodzi z dema, w którym `claude` i `codex` nie ma w PATH, więc role przeszły na Command Code (`*`).
+
 **Własny provider albo model.** Dopisz dowolne CLI, które przyjmuje zadanie i edytuje pliki w bieżącym katalogu, w `~/.config/orchestra/agents.toml` (wszystkie repo) albo `<repo>/.orchestra/agents.toml` (jedno repo). Wpisy nakładają się na `agents.toml`:
 
 ```toml
@@ -84,6 +88,8 @@ implementer = "mycli"
 ```
 
 **Własny podział.** Możesz pominąć plannera: `orchestra init-plan plan.json`, edycja, potem `orchestra run plan.json` albo **▶ Plan** w TUI.
+
+![Okno Plan: cel dla plannera albo własny plik planu](docs/tui-plan.png)
 
 | Klient | Stan |
 | --- | --- |

@@ -117,6 +117,28 @@ async def main() -> None:
         await pilot.pause(0.4)
         save(app, "tui-new-agent")
 
+    # bez Claude'a: rola planner i reviewer przechodzi na dostępnego agenta, okna Role i Plan
+    absent = ("claude", "codex")  # tych binarek "nie ma", więc role przechodzą na commandcode
+    missing = {k: AgentConfig(name=k, acp=tuple(MOCK), headless=("nie-ma-w-path", "{task}") if k in absent
+                              else (sys.executable, "{task}"), tier=a.tier, default_model=a.default_model)
+               for k, a in cfg.agents.items()}
+    cfg2 = Config(agents=missing, roles=dict(cfg.roles), fallback_order=("claude", "commandcode", "opencode", "codex"))
+    store2 = EventStore(tmp / "events2.db")
+    specs2 = [AgentSpec("commandcode", MOCK, str(tmp / "commandcode"))]
+    app2 = OrchestraApp(store2, Controller(store2, specs2), poll_s=0.05, config=cfg2, repo=repo)
+    async with app2.run_test(size=(150, 40)) as pilot:
+        await pilot.pause(1.0)
+        await pilot.press("f8")
+        await pilot.pause(0.5)
+        save(app2, "tui-roles")
+        await pilot.press("escape")
+        await pilot.pause(0.3)
+        await pilot.press("f7")
+        await pilot.pause(0.5)
+        app2.screen.query_one("#plan-goal").value = "dodaj walidację e-maili wraz z testami pytest"
+        await pilot.pause(0.2)
+        save(app2, "tui-plan")
+
     watch = WatchApp(store, poll_s=0.05)
     async with watch.run_test(size=(150, 36)) as pilot:
         await pilot.pause(0.6)

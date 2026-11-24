@@ -244,11 +244,11 @@ class RolesScreen(ModalScreen[tuple[dict[str, str], dict[str, str]] | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="roles-box"):
-            yield Label("Kto pełni role. Agent bez binarki w PATH zostanie zastąpiony pierwszym dostępnym.")
+            yield Label("Kto pełni role (brak agenta w PATH: zastąpi go inny)")
             for role in ROLE_NAMES:
                 yield Label(self.LABEL[role])
                 yield Select(self._options(), value=self.cfg.role_name(role), allow_blank=False, id=f"role-{role}")
-            yield Label("Model agenta (pusto: domyślny agenta). Format zależy od agenta, np. provider/model")
+            yield Label("Model wybranego agenta (pusto: domyślny)")
             first = self.cfg.role_name("implementer")
             yield Select(self._options(), value=first if first in self.cfg.agents else next(iter(self.cfg.agents)),
                          allow_blank=False, id="model-agent")
@@ -294,10 +294,10 @@ class PlanScreen(ModalScreen[tuple[str, str] | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="plan-box"):
-            yield Label(f"Cel: agent [b]{self.planner}[/b] rozbije go na zadania i workery je wykonają")
+            yield Label(f"Cel: planner ({self.planner}) rozbije go na zadania")
             yield Input(placeholder="np. dodaj walidację e-maili wraz z testami", id="plan-goal")
             yield Button("Zaplanuj i uruchom", id="plan-goal-ok", variant="success")
-            yield Label("Albo własny podział: plik planu JSON (szablon: orchestra init-plan)")
+            yield Label("Albo własny podział: plik planu JSON (szablon: init-plan)")
             yield Input(value=self.default_file, placeholder="ścieżka do plan.json", id="plan-file")
             yield Button("Uruchom plan z pliku", id="plan-file-ok", variant="primary")
             yield Button("Anuluj", id="plan-cancel")
