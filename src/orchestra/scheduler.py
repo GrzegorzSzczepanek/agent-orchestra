@@ -1,12 +1,12 @@
-"""Scheduler planu: równoległe wykonanie DAG-a zadań przez workera z bramką testów i eskalacją.
+"""Plan scheduler: parallel DAG execution of tasks by a worker with a test gate and escalation.
 
-Przepływ zadania:
-1. worker (rola implementer, tani model) działa w osobnym worktree odgałęzionym od gałęzi integracyjnej,
-2. bramka testów (test_cmd zadania, uruchamiany przez delegate),
-3. opcjonalnie do `discussion_rounds` (0 do 2) rund recenzji diffu przez rolę reviewer,
-4. scalenie gałęzi zadania do gałęzi integracyjnej `orchestra/run-...` (zależne zadania startują z jej czubka),
-5. po `max_failures` porażkach z rzędu jedna próba eskalowana do roli planner (mocny model).
-Budżet tokenów i kosztu na zadanie liczy się z logu SQLite (zdarzenia task_attempt).
+Task flow:
+1. worker (implementer role, cheap model) runs in a separate worktree branched from the integration branch,
+2. test gate (the task's test_cmd, run via delegate),
+3. optionally up to `discussion_rounds` (0 to 2) diff review rounds by the reviewer role,
+4. merge the task branch into the integration branch `orchestra/run-...` (dependent tasks start from its tip),
+5. after `max_failures` consecutive failures, one attempt escalated to the planner role (strong model).
+Token and cost budget per task come from the SQLite log (task_attempt events).
 """
 
 from __future__ import annotations
@@ -27,28 +27,28 @@ from .store import EventStore
 from .ledger import budget_state
 from .worktree import GitError, Worktree, create_worktree, git, remove_worktree, run, safe_env
 
-# Statusy workera, przy których ponawianie i eskalacja nie mają sensu (zła konfiguracja, brak dostępu, brak kredytów).
+# Worker statuses where retry and escalation make no sense (bad config, no access, no credits).
 FATAL_STATUSES = {"config_error", "worker_not_found", "auth_failed", "insufficient_credits"}
-# Statusy kończące tylko to zadanie, bez ponawiania i bez zatrzymywania reszty przebiegu.
+# Statuses that end only this task, without retry and without stopping the rest of the run.
 TASK_FATAL_STATUSES = {"red_check_failed"}
 GIT_ID = ["-c", "user.name=orchestra", "-c", "user.email=orchestra@localhost"]
 
 
 @dataclass
 class RunOptions:
-    parallel: int = 2  # 1 do 3
-    max_failures: int = 2  # kolejne porażki taniego workera przed eskalacją
+    parallel: int = 2  # 1 to 3
+    max_failures: int = 2  # consecutive cheap worker failures before escalation
     escalate: bool = True
     escalate_role: str = "planner"
-    hard_to_strong: bool = True  # zadania "hard" od razu do mocnego modelu
-    token_budget: int = 400_000  # tokeny (wejście + wyjście) na zadanie, 0 wyłącza limit
-    cost_budget_usd: float = 0.0  # koszt na zadanie, 0 wyłącza (koszt znany tylko gdy agent go raportuje)
-    discussion_rounds: int = 0  # 0 do 2 rund recenzji po zielonych testach
-    worker: str = ""  # nadpisanie roli implementer
+    hard_to_strong: bool = True  # "hard" tasks go straight to the strong model
+    token_budget: int = 400_000  # tokens (input + output) per task, 0 disables the limit
+    cost_budget_usd: float = 0.0  # cost per task, 0 disables (cost known only when the agent reports it)
+    discussion_rounds: int = 0  # 0 to 2 review rounds after green tests
+    worker: str = ""  # override for the implementer role
     model: str = ""
     timeout_s: float = 900
-    red_check: bool = True  # test_cmd musi failować przed zmianami workera (PlanTask.expect_red=false wyłącza dla zadania)
-    integration_test_cmd: str = ""  # pełne testy po każdym scaleniu, przy porażce merge jest cofany; puste wyłącza
+    red_check: bool = True  # test_cmd must fail before the worker's changes (PlanTask.expect_red=false disables it for a task)
+    integration_test_cmd: str = ""  # full tests after each merge; on failure the merge is reverted; empty disables
 
     def __post_init__(self) -> None:
         self.parallel = max(1, min(3, int(self.parallel)))
@@ -66,7 +66,7 @@ class Reviewer(Protocol):
     async def __call__(self, task: PlanTask, result: DelegateResult) -> Verdict: ...
 
 
-Executor = Callable[[PlanTask, str, str, str], Awaitable[DelegateResult]]  # task, prompt, worker, base -> wynik
+Executor = Callable[[PlanTask, str, str, str], Awaitable[DelegateResult]]  # task, prompt, worker, base -> result
 
 
 @dataclass
@@ -110,10 +110,10 @@ class RunReport:
                 "outcomes": {k: asdict(v) for k, v in self.outcomes.items()}}
 
     def render(self) -> str:
-        lines = [f"Przebieg {self.run_id}, gałąź integracyjna: {self.integration_branch}"]
+        lines = [f"Run {self.run_id}, integration branch: {self.integration_branch}"]
         for o in self.outcomes.values():
-            extra = " (eskalowane)" if o.escalated else ""
-            lines.append(f"  [{o.status}] {o.id}: {len(o.attempts)} prób, {o.tokens} tokenów{extra}"
+            extra = " (escalated)" if o.escalated else ""
+            lines.append(f"  [{o.status}] {o.id}: {len(o.attempts)} attempts, {o.tokens} tokens{extra}"
                          + (f", {o.error}" if o.error else ""))
         return "\n".join(lines)
 
@@ -167,7 +167,7 @@ class Scheduler:
         self._attempt_no: dict[str, int] = {}
         self._hint_cursor: dict[str, int] = {}
 
-    # --- konfiguracja pomocnicza ---
+    # --- helper config ---
     def _worker(self) -> str:
         return self.opt.worker or self.config.role_name("implementer")
 
@@ -175,7 +175,7 @@ class Scheduler:
         return self.config.role_name(self.opt.escalate_role)
 
     def _step_logger(self, task: PlanTask, worker: str) -> Callable[[str], None]:
-        """Linie stdout workera -> zdarzenia worker_step (agent task:<id>), widoczne na żywo w TUI."""
+        """Worker stdout lines -> worker_step events (agent task:<id>), shown live in the TUI."""
         def log(line: str) -> None:
             step = summarize_frame(line)
             if step is not None:
@@ -191,9 +191,9 @@ class Scheduler:
                               on_line=self._step_logger(task, worker),
                               red_check=self.opt.red_check and task.expect_red)
 
-    # --- sterowanie z TUI przez skrzynkę wiadomości ---
+    # --- control from the TUI via the message inbox ---
     def _hints(self, task_id: str) -> str:
-        """Nowe wskazówki użytkownika dla zadania (wiadomości do task:<run>:<task>), każda raz."""
+        """New user hints for the task (messages to task:<run>:<task>), each once."""
         to = f"task:{self.run_id}:{task_id}"
         new = self.store.inbox(to, self._hint_cursor.get(task_id, 0))
         if new:
@@ -201,7 +201,7 @@ class Scheduler:
         return "\n".join(m.body for m in new)
 
     async def _watch_control(self, running: dict[asyncio.Task[TaskOutcome], str]) -> None:
-        """Co sekundę sprawdza polecenie cancel dla przebiegu i zabija bieżące zadania."""
+        """Every second checks for a cancel command for the run and kills the current tasks."""
         cursor = 0
         while True:
             await asyncio.sleep(1.0)
@@ -217,9 +217,9 @@ class Scheduler:
     def _log(self, kind: str, payload: dict[str, Any], **kw: Any) -> None:
         self.store.add_event("scheduler", kind, {"run_id": self.run_id, **payload}, **kw)
 
-    # --- scalanie ---
+    # --- merge ---
     async def _integration_check(self) -> str:
-        """Pełne testy na gałęzi integracyjnej. Zwraca "" gdy zielono, inaczej ogon wyjścia z opisem porażki."""
+        """Full tests on the integration branch. Returns "" when green, otherwise the output tail with a failure description."""
         assert self._integ is not None
         cmd = self.opt.integration_test_cmd.strip()
         if not cmd:
@@ -228,15 +228,15 @@ class Scheduler:
             code, out, err = await run(shlex.split(cmd), self._integ.path, timeout=self.opt.timeout_s,
                                        env=safe_env(self.config.test_env_passthrough))
         except FileNotFoundError:
-            return f"nie znaleziono polecenia z integration_test_cmd: {cmd}"
+            return f"command not found from integration_test_cmd: {cmd}"
         except asyncio.TimeoutError:
-            return f"integration_test_cmd przekroczył {self.opt.timeout_s}s"
-        return "" if code == 0 else ((out + err)[-1500:] or f"kod wyjścia {code}")
+            return f"integration_test_cmd exceeded {self.opt.timeout_s}s"
+        return "" if code == 0 else ((out + err)[-1500:] or f"exit code {code}")
 
     async def _integrate(self, task: PlanTask, res: DelegateResult) -> tuple[str, str]:
-        """Commit w worktree zadania i merge do gałęzi integracyjnej, potem opcjonalnie pełne testy.
+        """Commit in the task's worktree and merge into the integration branch, then optionally full tests.
 
-        Zwraca ("", "") albo (status, opis błędu): merge_conflict lub integration_failed (merge cofnięty).
+        Returns ("", "") or (status, error description): merge_conflict or integration_failed (merge reverted).
         """
         assert self._integ is not None
         wt_path = Path(res.worktree)
@@ -244,24 +244,24 @@ class Scheduler:
             await git(["add", "-A"], wt_path)
             await git([*GIT_ID, "commit", "-q", "--allow-empty", "-m", f"orchestra: {task.id}"], wt_path)
         except GitError as exc:
-            return "merge_conflict", f"commit nie powiódł się: {exc}"
+            return "merge_conflict", f"commit failed: {exc}"
         async with self._merge_lock:
             before = (await git(["rev-parse", "HEAD"], self._integ.path)).strip()
             try:
-                await git([*GIT_ID, "merge", "--no-ff", "-q", "-m", f"orchestra: scalono {task.id}", res.branch],
+                await git([*GIT_ID, "merge", "--no-ff", "-q", "-m", f"orchestra: merged {task.id}", res.branch],
                           self._integ.path)
             except GitError as exc:
                 try:
                     await git(["merge", "--abort"], self._integ.path)
                 except GitError:
                     pass
-                return "merge_conflict", f"konflikt scalania: {exc}"
+                return "merge_conflict", f"merge conflict: {exc}"
             if self.opt.integration_test_cmd.strip():
                 bad = await self._integration_check()
                 self._log("integration_check", {"task_id": task.id, "ok": not bad, "output": bad[-800:]})
                 if bad:
                     await git(["reset", "--hard", before], self._integ.path)
-                    return "integration_failed", f"po scaleniu pełne testy są czerwone, merge cofnięty:\n{bad}"
+                    return "integration_failed", f"after merge full tests are red, merge reverted:\n{bad}"
         return "", ""
 
     async def _cleanup(self, res: DelegateResult | None) -> None:
@@ -272,7 +272,7 @@ class Scheduler:
             except GitError:
                 pass
 
-    # --- jedno zadanie ---
+    # --- single task ---
     async def _run_task(self, task: PlanTask) -> TaskOutcome:
         assert self._integ is not None
         out = TaskOutcome(id=task.id, status="failed")
@@ -288,14 +288,14 @@ class Scheduler:
 
         while True:
             if self._abort.is_set():
-                out.status, out.error = "skipped", "przerwano po błędzie krytycznym workera"
+                out.status, out.error = "skipped", "aborted after a fatal worker error"
                 break
             used = self.store.usage_for_task(self.run_id, task.id)
             if self.opt.token_budget and used["tokens_in"] + used["tokens_out"] >= self.opt.token_budget:
-                out.status, out.error = "over_budget", f"limit {self.opt.token_budget} tokenów na zadanie"
+                out.status, out.error = "over_budget", f"limit {self.opt.token_budget} tokens per task"
                 break
             if self.opt.cost_budget_usd and used["cost"] >= self.opt.cost_budget_usd:
-                out.status, out.error = "over_budget", f"limit kosztu {self.opt.cost_budget_usd} USD na zadanie"
+                out.status, out.error = "over_budget", f"cost limit {self.opt.cost_budget_usd} USD per task"
                 break
 
             budget = budget_state(self.repo, self.store, self.config)
@@ -339,10 +339,10 @@ class Scheduler:
                     self.store.post_message("reviewer", f"implementer:{task.id}",
                                             "APPROVE" if verdict.approved else verdict.feedback, thread=task.id)
                     if not verdict.approved:
-                        attempt.note = "recenzja: uwagi"
+                        attempt.note = "review: remarks"
                         feedback, prev_diff = f"Reviewer: {verdict.feedback}", res.diff
                         if rounds_left == 0:
-                            out.review_unresolved = True  # limit rund: akceptujemy zielone testy, uwagi zostają w raporcie
+                            out.review_unresolved = True  # round limit: we accept green tests, remarks stay in the report
                         else:
                             continue
                 merge_status, merge_err = await self._integrate(task, res)
@@ -361,7 +361,7 @@ class Scheduler:
             if status in FATAL_STATUSES:
                 out.status, out.error = "failed", f"{status}: {res.error}"
                 if worker == cheap:
-                    self._abort.set()  # ten sam worker zawiedzie przy następnych zadaniach, nie marnujemy czasu
+                    self._abort.set()  # the same worker will fail on the next tasks, do not waste time
                 break
 
             feedback, prev_diff = _feedback(res), res.diff
@@ -375,12 +375,12 @@ class Scheduler:
                 out.status, out.error = "failed", f"{status}: {res.error}"[:400]
                 break
 
-        await self._cleanup(last)  # przy sukcesie gałąź zadania jest już scalona do integracyjnej
+        await self._cleanup(last)  # on success the task branch is already merged into the integration branch
         self._log("task_end", {"task_id": task.id, "status": out.status, "attempts": len(out.attempts),
                                "escalated": out.escalated, "tokens": out.tokens})
         return out
 
-    # --- cały plan ---
+    # --- whole plan ---
     async def run(self, plan: Plan) -> RunReport:
         self._plan = plan
         self._integ = await create_worktree(self.repo, name=f"run-{self.run_id}", base="HEAD")
@@ -390,8 +390,8 @@ class Scheduler:
                                           "description": t.description[:120]} for t in plan.tasks]})
         if self.opt.integration_test_cmd.strip():
             bad = await self._integration_check()
-            if bad:  # baza już jest czerwona: każde scalenie byłoby cofane, więc nie zaczynamy
-                msg = f"integration_test_cmd nie przechodzi jeszcze przed zadaniami (baza czerwona): {bad[-500:]}"
+            if bad:  # the base is already red: every merge would be reverted, so do not start
+                msg = f"integration_test_cmd does not pass even before the tasks (base red): {bad[-500:]}"
                 outcomes0 = {t.id: TaskOutcome(t.id, "skipped", error=msg) for t in plan.tasks}
                 for t in plan.tasks:
                     self._log("task_end", {"task_id": t.id, "status": "skipped", "attempts": 0, "escalated": False,
@@ -419,7 +419,7 @@ class Scheduler:
             for tid in ts.get_ready():
                 bad = [d for d in tasks[tid].depends_on if outcomes[d].status != "done"]
                 if bad:
-                    outcomes[tid] = TaskOutcome(tid, "blocked", error=f"zależność nie powiodła się: {', '.join(bad)}")
+                    outcomes[tid] = TaskOutcome(tid, "blocked", error=f"dependency failed: {', '.join(bad)}")
                     self._log("task_end", {"task_id": tid, "status": "blocked", "attempts": 0, "escalated": False,
                                            "tokens": 0})
                     ts.done(tid)
@@ -433,16 +433,16 @@ class Scheduler:
                 try:
                     outcomes[tid] = fut.result()
                 except asyncio.CancelledError:
-                    outcomes[tid] = TaskOutcome(tid, "skipped", error="anulowano przez użytkownika")
+                    outcomes[tid] = TaskOutcome(tid, "skipped", error="cancelled by the user")
                     self._log("task_end", {"task_id": tid, "status": "skipped", "attempts": 0, "escalated": False,
                                            "tokens": 0})
-                except Exception as exc:  # noqa: BLE001 - błąd jednego zadania nie zatrzymuje reszty planu
+                except Exception as exc:  # noqa: BLE001 - one task's error does not stop the rest of the plan
                     outcomes[tid] = TaskOutcome(tid, "failed", error=f"{type(exc).__name__}: {exc}")
                 ts.done(tid)
         watcher.cancel()
 
         report = RunReport(self.run_id, self._integ.branch, {t.id: outcomes[t.id] for t in plan.tasks})
-        try:  # katalog worktree gałęzi integracyjnej usuwamy, sama gałąź zostaje do przeglądu i scalenia
+        try:  # remove the integration branch worktree directory; the branch itself stays for review and merge
             await git(["worktree", "remove", "--force", str(self._integ.path)], self.repo)
         except GitError:
             pass

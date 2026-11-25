@@ -1,6 +1,6 @@
-"""Delegowanie zadania workerowi w izolowanym worktree.
+"""Delegating a task to a worker in an isolated worktree.
 
-Worker "fake" zapisuje pliki z `fake_files` i służy do testów bez zainstalowanych agentów.
+The "fake" worker writes files from `fake_files` and is used for tests without installed agents.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from .worktree import Worktree, create_worktree, diff, remove_worktree, run, saf
 @dataclass
 class DelegateResult:
     # ok | tests_failed | worker_failed | worker_not_found | timeout | config_error
-    # statusy z kodów wyjścia workera: max_turns | insufficient_credits | auth_failed | rate_limited |
+    # statuses from worker exit codes: max_turns | insufficient_credits | auth_failed | rate_limited |
     # connection_error | server_error | permission_denied | no_response | interrupted
     status: str
     worktree: str = ""
@@ -44,7 +44,7 @@ class DelegateResult:
 
 
 def parse_command_code_output(stdout: str) -> tuple[str, dict[str, Any], str]:
-    """Zgodność wsteczna: (finalText, usage, subtype). Szczegóły w commandcode.parse_headless_output."""
+    """Backward compatibility: (finalText, usage, subtype). Details in commandcode.parse_headless_output."""
     hr = parse_headless_output(stdout)
     if not hr.found_result:
         return stdout[-2000:], {}, ""
@@ -56,11 +56,11 @@ def _tail(text: str, limit: int = 4000) -> str:
 
 
 def _missing_test_binary(test_cmd: str, workdir: Path) -> str:
-    """Nazwa pierwszego polecenia z test_cmd, jeśli nie da się go uruchomić (inaczej pusty napis)."""
+    """Name of the first command in test_cmd if it cannot be run (otherwise an empty string)."""
     try:
         parts = shlex.split(test_cmd)
     except ValueError:
-        return ""  # niepoprawny cudzysłów wyjdzie przy właściwym uruchomieniu
+        return ""  # bad quoting will show up on the actual run
     if not parts:
         return ""
     exe = parts[0]
@@ -86,40 +86,40 @@ async def delegate(
     on_line: Callable[[str], None] | None = None,
     red_check: bool = False,
 ) -> DelegateResult:
-    """Tworzy worktree, uruchamia workera headless, odpala test_cmd i zwraca diff."""
+    """Creates a worktree, runs the worker headless, runs test_cmd and returns the diff."""
     worker = worker or config.role_name("implementer")
     wt: Worktree = await create_worktree(repo, name=prompt, base=base)
     res = DelegateResult(status="ok", worktree=str(wt.path), branch=wt.branch, worker=worker, test_cmd=test_cmd)
     workdir = (wt.path / cwd).resolve() if cwd else wt.path
     try:
         if cwd and (wt.path.resolve() not in workdir.parents or not workdir.is_dir()):
-            res.status, res.error = "worker_failed", f"cwd {cwd!r} nie jest katalogiem w repo (przy HEAD)"
+            res.status, res.error = "worker_failed", f"cwd {cwd!r} is not a directory in the repo (at HEAD)"
             return res
         missing = _missing_test_binary(test_cmd, workdir)
-        if missing:  # lepiej zatrzymać się od razu niż spalić tokeny workera na zadaniu, którego nie da się zweryfikować
+        if missing:  # better to stop immediately than burn worker tokens on a task that cannot be verified
             res.status = "config_error"
-            res.error = (f"test_cmd: nie znaleziono polecenia {missing!r} (PATH albo katalog {cwd or '.'} w worktree). "
-                         "Zainstaluj je, podaj pełną ścieżkę albo popraw test_cmd.")
+            res.error = (f"test_cmd: command not found {missing!r} (PATH or directory {cwd or '.'} in the worktree). "
+                         "Install it, give the full path or fix test_cmd.")
             return res
         if red_check and test_cmd:
-            # test ma failować przed zmianami workera, inaczej zadanie jest puste albo test niczego nie weryfikuje
+            # the test must fail before the worker's changes; otherwise the task is empty or the test verifies nothing
             try:
                 rcode, rout, rerr = await run(shlex.split(test_cmd), workdir, timeout=timeout_s,
                                               env=safe_env(config.test_env_passthrough))
             except asyncio.TimeoutError:
-                res.status, res.error = "timeout", f"red check: test_cmd przekroczył {timeout_s}s"
+                res.status, res.error = "timeout", f"red check: test_cmd exceeded {timeout_s}s"
                 return res
             if rcode == 0:
                 res.status = "red_check_failed"
                 res.test_exit_code, res.test_output = rcode, _tail(mask_secrets(rout + rerr))
-                res.error = ("red check: test_cmd przechodzi już przed zmianami workera, więc zadanie jest puste albo "
-                             "test niczego nie weryfikuje. Popraw test albo ustaw expect_red=false.")
+                res.error = ("red check: test_cmd already passes before the worker's changes, so the task is empty or "
+                             "the test verifies nothing. Fix the test or set expect_red=false.")
                 return res
         if worker == "fake":
             for rel, content in (fake_files or {}).items():
                 target = (wt.path / rel).resolve()
                 if wt.path.resolve() not in target.parents:
-                    raise ValueError(f"Ścieżka poza worktree: {rel}")
+                    raise ValueError(f"Path outside the worktree: {rel}")
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(content, encoding="utf-8")
             res.worker_exit_code = 0
@@ -127,7 +127,7 @@ async def delegate(
         else:
             agent = config.agents.get(worker)
             if agent is None:
-                res.status, res.error = "worker_failed", f"Nieznany worker: {worker}"
+                res.status, res.error = "worker_failed", f"Unknown worker: {worker}"
                 return res
             try:
                 argv = agent.headless_argv(prompt, model or None)
@@ -138,10 +138,10 @@ async def delegate(
                 code, out, err = await run(argv, workdir, timeout=timeout_s, on_line=on_line,
                                            env=safe_env(agent.env_passthrough))
             except FileNotFoundError:
-                res.status, res.error = "worker_not_found", f"Brak binarki: {argv[0]}"
+                res.status, res.error = "worker_not_found", f"Missing binary: {argv[0]}"
                 return res
             except asyncio.TimeoutError:
-                res.status, res.error = "timeout", f"Worker przekroczył {timeout_s}s"
+                res.status, res.error = "timeout", f"Worker exceeded {timeout_s}s"
                 return res
             res.worker_exit_code = code
             hr: HeadlessResult = parse_headless_output(out)
@@ -157,7 +157,7 @@ async def delegate(
             elif hr.subtype == "error" or hr.is_error:
                 res.status = "worker_failed"
             if res.status != "ok":
-                res.error = _tail(mask_secrets(hr.error or err.strip() or hr.subtype or f"kod wyjścia {code}"))
+                res.error = _tail(mask_secrets(hr.error or err.strip() or hr.subtype or f"exit code {code}"))
 
         if test_cmd and res.status == "ok":
             tcode, tout, terr = await run(shlex.split(test_cmd), workdir, timeout=timeout_s,
@@ -167,7 +167,7 @@ async def delegate(
                 res.status = "tests_failed"
         res.diff = await diff(wt)
         return res
-    except Exception as exc:  # noqa: BLE001 - zwracamy błąd narzędziu MCP zamiast przerywać serwer
+    except Exception as exc:  # noqa: BLE001 - return the error to the MCP tool instead of aborting the server
         res.status, res.error = "worker_failed", f"{type(exc).__name__}: {exc}"
         return res
     finally:
