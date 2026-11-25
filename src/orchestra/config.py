@@ -1,4 +1,4 @@
-"""Ładowanie konfiguracji agentów z agents.toml."""
+"""Load agent configuration from agents.toml."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 class ModelRequired(ValueError):
-    """Agent wymaga jawnie ustawionego modelu (ID z `cmd --list-models`), a żaden nie został podany."""
+    """The agent requires an explicitly set model (an ID from `cmd --list-models`) and none was provided."""
 
 
 @dataclass(frozen=True)
@@ -22,49 +22,49 @@ class AgentConfig:
     headless: tuple[str, ...] = ()
     tier: str = "strong"
     default_model: str = ""
-    model_env: str = ""  # nazwa zmiennej środowiskowej z ID modelu (np. ORCHESTRA_CMD_MODEL)
-    require_model: bool = False  # gdy true, brak modelu to jasny błąd zamiast domyślnego modelu agenta
-    # Zmienne środowiskowe przekazywane agentowi uruchamianemu po ACP. SDK ACP startuje proces z okrojonym
-    # środowiskiem (HOME, PATH itp.), więc np. COMMAND_CODE_API_KEY trzeba przekazać jawnie.
+    model_env: str = ""  # name of the environment variable holding the model ID (for example ORCHESTRA_CMD_MODEL)
+    require_model: bool = False  # when true, a missing model is a clear error instead of the agent's default model
+    # Environment variables passed to an agent launched over ACP. The ACP SDK starts the process with a trimmed
+    # environment (HOME, PATH, etc.), so for example COMMAND_CODE_API_KEY must be passed explicitly.
     env_passthrough: tuple[str, ...] = ()
-    # Cena za 1M tokenów w USD, do szacowania kosztu agentów, które go nie raportują (np. cmd). 0 oznacza nieznana.
+    # Price per 1M tokens in USD, used to estimate the cost of agents that do not report it (for example cmd). 0 means unknown.
     price_in_per_mtok: float = 0.0
     price_out_per_mtok: float = 0.0
 
     def binary(self) -> str:
-        """Pierwszy element komendy headless (a gdy jej brak, ACP): to, co musi być w PATH."""
+        """First element of the headless command (or ACP when that is absent): the binary that must be on PATH."""
         argv = self.headless or self.acp
         return argv[0] if argv else ""
 
     def is_available(self) -> bool:
-        """Czy binarka agenta jest zainstalowana (w PATH albo jako ścieżka)."""
+        """Whether the agent binary is installed (on PATH or as a path)."""
         binary = self.binary()
         return bool(binary) and shutil.which(binary) is not None
 
     def acp_env(self) -> dict[str, str]:
-        """Zmienne z env_passthrough, które są ustawione w bieżącym środowisku."""
+        """Variables from env_passthrough that are set in the current environment."""
         return {k: os.environ[k] for k in self.env_passthrough if os.environ.get(k)}
 
     def resolve_model(self, model: str | None = None) -> str:
-        """Kolejność: argument, zmienna środowiskowa model_env, pole default_model."""
+        """Order: argument, model_env environment variable, default_model field."""
         env_value = os.environ.get(self.model_env, "").strip() if self.model_env else ""
         return (model or env_value or self.default_model).strip()
 
     def headless_argv(self, task: str, model: str | None = None) -> list[str]:
-        """Zwraca argv trybu headless z podstawionym zadaniem i modelem."""
+        """Return the headless-mode argv with the task and model substituted."""
         if not self.headless:
-            raise ValueError(f"Agent {self.name} nie ma komendy headless")
+            raise ValueError(f"Agent {self.name} has no headless command")
         chosen = self.resolve_model(model)
         if self.require_model and not chosen and any("{model}" in part for part in self.headless):
-            hint = f"zmienną {self.model_env}" if self.model_env else "pole default_model w agents.toml"
+            hint = f"the {self.model_env} variable" if self.model_env else "the default_model field in agents.toml"
             raise ModelRequired(
-                f"Agent {self.name} wymaga modelu: ustaw {hint} na ID z `cmd --list-models` "
-                f"(np. deepseek/deepseek-v4.1-flash) albo podaj argument model."
+                f"Agent {self.name} requires a model: set {hint} to an ID from `cmd --list-models` "
+                f"(for example deepseek/deepseek-v4.1-flash) or pass a model argument."
             )
         out: list[str] = []
         for part in self.headless:
             if part == "{model}" and not chosen:
-                # brak modelu: usuń też poprzedzającą flagę --model/-m
+                # no model: also drop the preceding --model/-m flag
                 if out and out[-1] in ("--model", "-m"):
                     out.pop()
                 continue
@@ -79,9 +79,9 @@ OVERRIDES_FILE = "roles.json"
 @dataclass(frozen=True)
 class RoleInfo:
     role: str
-    configured: str  # co wpisano w agents.toml
-    effective: str  # kto naprawdę wykona rolę
-    reason: str  # "" gdy bez zmian, inaczej: override, fallback albo brak agenta
+    configured: str  # what was written in agents.toml
+    effective: str  # who actually performs the role
+    reason: str  # "" when unchanged, otherwise: override, fallback or no agent
 
     @property
     def changed(self) -> bool:
@@ -92,12 +92,12 @@ class RoleInfo:
 class Config:
     agents: dict[str, AgentConfig] = field(default_factory=dict)
     roles: dict[str, str] = field(default_factory=dict)
-    # kolejność prób, gdy agent roli nie jest zainstalowany (potem reszta agentów w kolejności z pliku)
+    # order of attempts when the role's agent is not installed (then the rest of the agents in file order)
     fallback_order: tuple[str, ...] = ()
-    # zmienne środowiskowe przekazywane do test_cmd i integration_test_cmd poza bezpiecznym zestawem
+    # environment variables passed to test_cmd and integration_test_cmd beyond the safe set
     test_env_passthrough: tuple[str, ...] = ()
-    role_overrides: dict[str, str] = field(default_factory=dict)  # wybór użytkownika, np. z TUI
-    model_overrides: dict[str, str] = field(default_factory=dict)  # agent -> model, np. z TUI
+    role_overrides: dict[str, str] = field(default_factory=dict)  # user choice, for example from the TUI
+    model_overrides: dict[str, str] = field(default_factory=dict)  # agent -> model, for example from the TUI
     _base_agents: dict[str, AgentConfig] | None = field(default=None, repr=False, compare=False)
 
     def available(self, name: str) -> bool:
@@ -108,19 +108,19 @@ class Config:
         order = [n for n in self.fallback_order if n in self.agents]
         order += [n for n in self.agents if n not in order]
         usable = [n for n in order if self.agents[n].headless and self.available(n)]
-        want = "cheap" if role == "implementer" else "strong"  # planner i reviewer wolą mocny model, worker tani
-        return sorted(usable, key=lambda n: self.agents[n].tier != want)  # sort jest stabilny
+        want = "cheap" if role == "implementer" else "strong"  # planner and reviewer prefer a strong model, the worker a cheap one
+        return sorted(usable, key=lambda n: self.agents[n].tier != want)  # sort is stable
 
     def role_info(self, role: str) -> RoleInfo:
         configured = self.roles.get(role, "")
         chosen = self.role_overrides.get(role, "")
         if chosen in self.agents:
-            return RoleInfo(role, configured, chosen, "" if chosen == configured else "wybór użytkownika")
+            return RoleInfo(role, configured, chosen, "" if chosen == configured else "user choice")
         if configured and self.available(configured):
             return RoleInfo(role, configured, configured, "")
         for name in self._candidates(role):
-            return RoleInfo(role, configured, name, f"zastępczo, brak {configured or 'agenta'} w PATH")
-        return RoleInfo(role, configured, configured, "żaden agent nie jest zainstalowany")
+            return RoleInfo(role, configured, name, f"fallback, missing {configured or 'agent'} in PATH")
+        return RoleInfo(role, configured, configured, "no agent is installed")
 
     def role_name(self, role: str) -> str:
         return self.role_info(role).effective
@@ -128,11 +128,11 @@ class Config:
     def agent_for_role(self, role: str) -> AgentConfig:
         name = self.role_name(role)
         if name not in self.agents:
-            raise KeyError(f"Rola {role} nie ma agenta: dodaj go w agents.toml albo wybierz w TUI (przycisk Role)")
+            raise KeyError(f"Role {role} has no agent: add one in agents.toml or choose one in the TUI (Role button)")
         return self.agents[name]
 
     def reload_overrides(self, repo: str | Path) -> None:
-        """Wczytuje <repo>/.orchestra/roles.json (zapisuje je TUI albo `orchestra roles`)."""
+        """Load <repo>/.orchestra/roles.json (written by the TUI or `orchestra roles`)."""
         if self._base_agents is None:
             self._base_agents = dict(self.agents)
         roles, models = read_overrides(repo)
@@ -140,7 +140,7 @@ class Config:
         self.model_overrides = {a: m for a, m in models.items() if a in self._base_agents}
         for name, base in self._base_agents.items():
             model = self.model_overrides.get(name)
-            # model wybrany użytkownikiem wygrywa ze zmienną środowiskową i default_model
+            # a model chosen by the user wins over the environment variable and default_model
             self.agents[name] = replace(base, default_model=model, model_env="") if model else base
 
 
@@ -159,7 +159,7 @@ def read_overrides(repo: str | Path) -> tuple[dict[str, str], dict[str, str]]:
 
 
 def save_overrides(repo: str | Path, *, roles: dict[str, str] | None = None, models: dict[str, str] | None = None) -> None:
-    """Dopisuje wybór ról i modeli (pusta wartość kasuje wpis)."""
+    """Append the choice of roles and models (an empty value deletes the entry)."""
     cur_roles, cur_models = read_overrides(repo)
     for target, new in ((cur_roles, roles), (cur_models, models)):
         for key, value in (new or {}).items():
@@ -174,7 +174,7 @@ def save_overrides(repo: str | Path, *, roles: dict[str, str] | None = None, mod
 
 
 def user_config_paths(repo: str | Path | None = None) -> list[Path]:
-    """Dodatkowe pliki z własnymi agentami: ~/.config/orchestra/agents.toml, potem <repo>/.orchestra/agents.toml."""
+    """Additional files with custom agents: ~/.config/orchestra/agents.toml, then <repo>/.orchestra/agents.toml."""
     user = os.environ.get("ORCHESTRA_USER_CONFIG") or str(Path.home() / ".config" / "orchestra" / "agents.toml")
     paths = [Path(user)]
     if repo is not None:
@@ -192,7 +192,7 @@ def _merge(base: dict, extra: dict) -> dict:
 
 
 def load_config(path: str | Path = "agents.toml", repo: str | Path | None = None) -> Config:
-    """Wczytuje agents.toml i dokłada pliki użytkownika (własni agenci i modele), jeśli istnieją."""
+    """Load agents.toml and merge in the user files (custom agents and models) if they exist."""
     data = tomllib.loads(Path(path).read_text(encoding="utf-8"))
     for extra in user_config_paths(repo):
         data = _merge(data, tomllib.loads(extra.read_text(encoding="utf-8")))
@@ -215,7 +215,7 @@ def load_config(path: str | Path = "agents.toml", repo: str | Path | None = None
     roles = dict(data.get("roles", {}))
     for role, agent in roles.items():
         if agent not in agents:
-            raise ValueError(f"Rola {role} wskazuje nieznanego agenta {agent}")
+            raise ValueError(f"Role {role} points to an unknown agent {agent}")
     cfg = Config(agents=agents, roles=roles, fallback_order=tuple(data.get("fallback_order", ())),
                  test_env_passthrough=tuple(data.get("test_env_passthrough", ())))
     if repo is not None:

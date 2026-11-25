@@ -34,7 +34,7 @@ def test_missing_agent_falls_back_by_tier():
     cfg = cfg3()
     assert cfg.role_info("planner").effective == "big"  # planner woli mocny
     assert cfg.role_info("implementer").effective == "small"  # worker woli tani
-    assert cfg.role_info("planner").changed and "brak gone" in cfg.role_info("planner").reason
+    assert cfg.role_info("planner").changed and "missing gone" in cfg.role_info("planner").reason
     assert cfg.agent_for_role("reviewer").name == "big"
 
 
@@ -48,7 +48,7 @@ def test_fallback_order_and_available_agent_untouched():
 def test_nothing_installed_keeps_configured_name_and_says_why():
     cfg = Config(agents={"gone": agent("gone", binary="no-such-binary-xyz")}, roles={"planner": "gone"})
     info = cfg.role_info("planner")
-    assert info.effective == "gone" and "żaden agent" in info.reason
+    assert info.effective == "gone" and "no agent" in info.reason
 
 
 def test_user_override_wins_and_model_override_beats_env(tmp_path, monkeypatch):
@@ -57,7 +57,7 @@ def test_user_override_wins_and_model_override_beats_env(tmp_path, monkeypatch):
     assert cfg.agents["a"].resolve_model() == "z-env"
     save_overrides(tmp_path, roles={"planner": "b", "bogus": "nie-ma"}, models={"a": "z-tui"})
     cfg.reload_overrides(tmp_path)
-    assert cfg.role_name("planner") == "b" and cfg.role_info("planner").reason == "wybór użytkownika"
+    assert cfg.role_name("planner") == "b" and cfg.role_info("planner").reason == "user choice"
     assert cfg.agents["a"].resolve_model() == "z-tui"
     save_overrides(tmp_path, roles={"planner": ""}, models={"a": ""})  # pusta wartość kasuje wybór
     cfg.reload_overrides(tmp_path)
@@ -143,7 +143,7 @@ def test_detect_client_prefers_order_and_falls_back_to_none(monkeypatch, tmp_pat
 
 def test_skill_text_strips_frontmatter():
     text = skill_text(ROOT / ".agents" / "skills" / "orchestrate-hard-task" / "SKILL.md")
-    assert text.startswith("# Rozbijanie") and "name:" not in text.splitlines()[0]
+    assert text.startswith("# Splitting a hard task") and "name:" not in text.splitlines()[0]
 
 
 def test_build_launch_per_client(tmp_path):

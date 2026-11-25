@@ -7,7 +7,7 @@ from orchestra.scheduler import Verdict
 
 
 def make_task() -> PlanTask:
-    return PlanTask(id="t1", description="dodaj funkcję", acceptance=["a", "b"], test_cmd="pytest -q")
+    return PlanTask(id="t1", description="add function", acceptance=["a", "b"], test_cmd="pytest -q")
 
 
 def review(reply: str, task: PlanTask | None = None, result: DelegateResult | None = None) -> Verdict:
@@ -29,15 +29,15 @@ def test_approve_is_case_insensitive_and_ignores_surrounding_whitespace():
 
 
 def test_changes_prefix_returns_feedback_without_prefix():
-    verdict = review("CHANGES: popraw X")
+    verdict = review("CHANGES: fix X")
     assert verdict.approved is False
-    assert verdict.feedback == "popraw X"
+    assert verdict.feedback == "fix X"
 
 
 def test_reply_without_changes_prefix_uses_whole_reply_as_feedback():
-    verdict = review("Brakuje testu")
+    verdict = review("Missing test")
     assert verdict.approved is False
-    assert verdict.feedback == "Brakuje testu"
+    assert verdict.feedback == "Missing test"
 
 
 def test_bare_changes_prefix_keeps_whole_reply():
@@ -54,7 +54,7 @@ def test_prompt_contains_task_details_and_diff():
         return "APPROVE"
 
     task = make_task()
-    result = DelegateResult(status="ok", diff="+dodana linia diffu")
+    result = DelegateResult(status="ok", diff="+added diff line")
     asyncio.run(make_reviewer(ask)(task, result))
 
     prompt = captured["prompt"]
@@ -74,8 +74,8 @@ def test_long_diff_is_truncated_to_last_12000_chars():
         captured["prompt"] = prompt
         return "APPROVE"
 
-    start_marker = "POCZATEK_DIFFU_ZNACZNIK"
-    end_marker = "KONIEC_DIFFU_ZNACZNIK"
+    start_marker = "DIFF_START_MARKER"
+    end_marker = "DIFF_END_MARKER"
     body = "x" * (20000 - len(start_marker) - len(end_marker))
     diff = start_marker + body + end_marker
     assert len(diff) == 20000
@@ -85,7 +85,7 @@ def test_long_diff_is_truncated_to_last_12000_chars():
     prompt = captured["prompt"]
     assert end_marker in prompt
     assert start_marker not in prompt
-    # ostatnie 12000 znaków diffu jest w promptcie w całości
+    # the last 12000 characters of the diff are fully in the prompt
     assert diff[-12000:] in prompt
 
 
@@ -93,9 +93,9 @@ def test_parse_verdict_accepts_approve_after_preamble_and_changes_wins():
     from orchestra.agents_io import parse_verdict
 
     assert parse_verdict("APPROVE").approved
-    assert parse_verdict("approve, wygląda dobrze").approved
-    assert parse_verdict("Sprawdzam statycznie, każda asercja pasuje.\n\n**APPROVE**").approved  # wstęp przed werdyktem
-    v = parse_verdict("Wstęp.\nCHANGES: dodaj test dla pustej listy")
-    assert not v.approved and v.feedback == "dodaj test dla pustej listy"
-    assert not parse_verdict("CHANGES: APPROVE po poprawkach").approved
-    assert not parse_verdict("Nie jestem pewien.").approved
+    assert parse_verdict("approve, looks good").approved
+    assert parse_verdict("Checking statically, every assertion matches.\n\n**APPROVE**").approved  # preamble before the verdict
+    v = parse_verdict("Preamble.\nCHANGES: add a test for an empty list")
+    assert not v.approved and v.feedback == "add a test for an empty list"
+    assert not parse_verdict("CHANGES: APPROVE after fixes").approved
+    assert not parse_verdict("I am not sure.").approved

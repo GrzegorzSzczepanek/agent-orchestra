@@ -18,7 +18,7 @@ FIX = Path(__file__).parent / "fixtures"
 
 
 def test_parse_real_unauth_result_line():
-    # prawdziwa linia z `cmd -p ... --output-format json` bez logowania (cmd 1.93.2)
+    # a real line from `cmd -p ... --output-format json` without login (cmd 1.93.2)
     r = parse_headless_output((FIX / "cmd_result_unauth.ndjson").read_text())
     assert r.found_result and r.subtype == "error"
     assert "cmd login" in r.error
@@ -26,29 +26,29 @@ def test_parse_real_unauth_result_line():
 
 
 def test_parse_real_cmd_success_ndjson():
-    """Prawdziwy sukces cmd 1.93.2 (zanonimizowany): 11 ramek event i końcowa linia result."""
+    """A real cmd 1.93.2 success (anonymized): 11 event frames and a final result line."""
     r = parse_headless_output((FIX / "cmd_result_success.ndjson").read_text())
     assert r.found_result and r.subtype == "success" and r.final_text == "ok"
     assert r.events == 11 and r.parse_errors == 0
     assert r.session_id == "00000000-0000-0000-0000-000000000000"
     assert r.stop_reason == "end_turn"
     assert r.usage == {"tokens_in": 13857, "tokens_out": 3, "cache_read": 6016, "cache_write": 0}
-    assert r.cost_usd == 0.0  # cmd nie raportuje kosztu
+    assert r.cost_usd == 0.0  # cmd does not report cost
 
 
 def test_parse_success_with_events_unknown_frames_and_garbage():
     out = "\n".join([
-        "log nie json",
+        "log not json",
         json.dumps({"type": "event", "event": {"type": "tool_running", "toolCallId": "1", "toolName": "read_file"}}),
-        json.dumps({"type": "event", "event": {"type": "cos_nowego", "x": 1}}),
-        '{"zepsute": ',
+        json.dumps({"type": "event", "event": {"type": "something_new", "x": 1}}),
+        '{"broken": ',
         json.dumps({"type": "future_frame"}),
         json.dumps({"type": "result", "subtype": "success", "sessionId": "s1", "stopReason": "end_turn",
                     "usage": {"inputTokens": 100, "outputTokens": 20, "cacheReadTokens": 80, "cacheWriteTokens": 5},
-                    "durationMs": 12, "finalText": "gotowe"}),
+                    "durationMs": 12, "finalText": "done"}),
     ])
     r = parse_headless_output(out)
-    assert (r.subtype, r.final_text, r.session_id, r.stop_reason) == ("success", "gotowe", "s1", "end_turn")
+    assert (r.subtype, r.final_text, r.session_id, r.stop_reason) == ("success", "done", "s1", "end_turn")
     assert r.events == 2 and r.parse_errors == 1
     assert r.usage["tokens_in"] == 100 and r.usage["cache_read"] == 80
 
@@ -63,12 +63,12 @@ def test_parse_optional_fields_missing_and_claude_format():
 
 
 def test_parse_no_result_line():
-    r = parse_headless_output("tylko tekst\n")
+    r = parse_headless_output("just text\n")
     assert not r.found_result and r.subtype == ""
 
 
 def test_parse_real_claude_usage_limit_is_error_despite_success_subtype():
-    """Prawdziwa odpowiedź `claude -p --output-format json` przy limicie: subtype=success, is_error=true."""
+    """A real `claude -p --output-format json` reply at the limit: subtype=success, is_error=true."""
     r = parse_headless_output((FIX / "claude_result_usage_limit.json").read_text())
     assert r.found_result and r.subtype == "success"
     assert r.is_error and "monthly spend limit" in r.error
@@ -93,10 +93,10 @@ def test_exit_code_mapping():
 def test_parse_models_real_output():
     models = parse_models((FIX / "cmd_list_models.txt").read_text())
     ids = {m.id for m in models}
-    assert len(models) == 105  # tyle podaje nagłówek `Available models · 105 models`
+    assert len(models) == 105  # as reported by the header `Available models · 105 models`
     assert "typesafe/jev" not in {m.id for m in models}
     assert {"deepseek/deepseek-v4.1-flash", "z-ai/glm-5.3-flash", "moonshotai/kimi-k2.5"} <= ids
-    # linie pomocnicze nie są modelami
+    # helper lines are not models
     assert not any(i.startswith(("cmd", "Docs", "Pass")) for i in ids)
     assert all("://" not in i and not i.endswith(":") for i in ids)
     assert any(m.id == "recursive/flint-v1.0:free" for m in models)
@@ -107,14 +107,14 @@ def test_resolve_model_full_short_and_case():
     assert resolve_model("deepseek/deepseek-v4.1-flash", models) == "deepseek/deepseek-v4.1-flash"
     assert resolve_model("GLM-5.3-FLASH", models) == "z-ai/glm-5.3-flash"
     assert resolve_model("kimi-k2.5", models) == "moonshotai/kimi-k2.5"
-    assert resolve_model("nie-ma-takiego", models) is None
+    assert resolve_model("no-such-model", models) is None
     assert resolve_model("", models) is None
 
 
 def test_mask_secrets():
     env = {"COMMAND_CODE_API_KEY": "abcd1234efgh5678", "HOME": "/home/x"}
-    text = ("klucz abcd1234efgh5678 oraz Bearer eyJhbGciOiJIUzI1NiJ9.xxxxxxxx.yyyy "
-            "i token=ghp_ABCDEFGHIJKLMNOPQRSTUV oraz sk-ant-api03-ABCDEFGHIJKL oraz /home/x")
+    text = ("key abcd1234efgh5678 and Bearer eyJhbGciOiJIUzI1NiJ9.xxxxxxxx.yyyy "
+            "and token=ghp_ABCDEFGHIJKLMNOPQRSTUV and sk-ant-api03-ABCDEFGHIJKL and /home/x")
     out = mask_secrets(text, env)
     assert "abcd1234efgh5678" not in out and "eyJhbGci" not in out
     assert "ghp_ABCDEF" not in out and "sk-ant-api03" not in out
@@ -140,13 +140,13 @@ async def test_delegate_statuses(git_repo: Path, tmp_path: Path, subtype, code, 
     res = await delegate(Config(agents={"w": agent}, roles={}), git_repo, "x", worker="w",
                          test_cmd=f"{sys.executable} -c 'raise SystemExit(1)'")
     assert res.status == expected, res
-    assert res.test_exit_code is None  # bramka testów nie rusza przy porażce workera
+    assert res.test_exit_code is None  # the test gate does not run on a worker failure
     assert res.worker_exit_code == code
     assert res.error
 
 
 async def test_delegate_claude_is_error_with_zero_exit_is_worker_failed(git_repo: Path, tmp_path: Path):
-    """Claude potrafi zwrócić kod 0 i subtype=success, a mimo to is_error=true (np. limit zużycia)."""
+    """Claude can return exit code 0 and subtype=success yet is_error=true (e.g. usage limit)."""
     fixture = FIX / "claude_result_usage_limit.json"
     agent = _script(tmp_path, f"import sys\nsys.stdout.write(open({str(fixture)!r}).read())\n")
     res = await delegate(Config(agents={"w": agent}, roles={}), git_repo, "x", worker="w")
@@ -164,6 +164,6 @@ async def test_delegate_model_required_is_config_error(git_repo: Path, monkeypat
 
 async def test_delegate_masks_secrets_in_error(git_repo: Path, tmp_path: Path, monkeypatch):
     monkeypatch.setenv("COMMAND_CODE_API_KEY", "supersecretvalue123")
-    agent = _script(tmp_path, "import sys\nprint('klucz supersecretvalue123', file=sys.stderr)\nsys.exit(2)\n")
+    agent = _script(tmp_path, "import sys\nprint('key supersecretvalue123', file=sys.stderr)\nsys.exit(2)\n")
     res = await delegate(Config(agents={"w": agent}, roles={}), git_repo, "x", worker="w")
     assert res.status == "worker_failed" and "supersecretvalue123" not in res.error

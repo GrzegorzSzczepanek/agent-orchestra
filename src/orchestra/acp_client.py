@@ -1,6 +1,6 @@
-"""Klient ACP: uruchamia agenta jako podproces, normalizuje session/update do logu SQLite.
+"""ACP client: launches an agent as a subprocess, normalizes session/update into the SQLite log.
 
-Zbudowany na oficjalnym SDK (agent-client-protocol, spawn_agent_process).
+Built on the official SDK (agent-client-protocol, spawn_agent_process).
 """
 
 from __future__ import annotations
@@ -29,12 +29,12 @@ from acp.schema import (
 
 from .store import EventStore
 
-# (nazwa agenta, tool_call, opcje) -> option_id wybranej opcji albo None (anulowanie)
+# (agent name, tool_call, options) -> option_id of the chosen option or None (cancel)
 PermissionHandler = Callable[[str, ToolCallUpdate, list[PermissionOption]], Awaitable[str | None]]
 
 
 async def reject_all(agent: str, tool_call: ToolCallUpdate, options: list[PermissionOption]) -> str | None:
-    """Domyślna, bezpieczna polityka: wybierz pierwszą opcję reject_*, a gdy jej nie ma, anuluj."""
+    """Default, safe policy: choose the first reject_* option, and when there is none, cancel."""
     for opt in options:
         if opt.kind.startswith("reject"):
             return opt.option_id
@@ -105,7 +105,7 @@ class _OrchestraClient(Client):
 
 
 class AgentSession:
-    """Jedna sesja ACP: jeden proces agenta, jeden katalog projektu (zwykle worktree)."""
+    """One ACP session: one agent process, one project directory (usually a worktree)."""
 
     def __init__(
         self,
