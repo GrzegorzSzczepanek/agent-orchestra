@@ -1,4 +1,4 @@
-"""Wspólny log zdarzeń i skrzynki wiadomości w SQLite (tryb WAL)."""
+"""Shared event log and message mailbox in SQLite (WAL mode)."""
 
 from __future__ import annotations
 
@@ -77,7 +77,7 @@ class Message:
 
 
 def _masked(value: Any) -> Any:
-    """Maskuje sekrety we wszystkich napisach payloadu (klucze zostają bez zmian)."""
+    """Mask secrets in every string of the payload (keys are left unchanged)."""
     if isinstance(value, str):
         return mask_secrets(value)
     if isinstance(value, dict):
@@ -88,18 +88,18 @@ def _masked(value: Any) -> Any:
 
 
 def _make_private(path: Path) -> None:
-    """Baza zawiera wyjście agentów i testów: tylko właściciel. Pliki -wal i -shm dziedziczą prawa po bazie."""
+    """The database holds agent and test output: owner only. The -wal and -shm files inherit the database permissions."""
     try:
         os.close(os.open(path, os.O_CREAT | os.O_WRONLY, 0o600))
         for p in (path, Path(f"{path}-wal"), Path(f"{path}-shm")):
             if p.exists():
                 p.chmod(0o600)
     except OSError:
-        pass  # cudzy plik albo system plików bez praw POSIX
+        pass  # someone else's file or a filesystem without POSIX permissions
 
 
 class EventStore:
-    """Cienka warstwa nad sqlite3. Kilka połączeń (TUI, serwer MCP, klient ACP) może pisać równolegle dzięki WAL."""
+    """Thin layer over sqlite3. Several connections (TUI, MCP server, ACP client) can write concurrently thanks to WAL."""
 
     def __init__(self, path: str | Path):
         self.path = str(path)
@@ -119,7 +119,7 @@ class EventStore:
     def journal_mode(self) -> str:
         return self._db.execute("PRAGMA journal_mode").fetchone()[0]
 
-    # --- zdarzenia ---
+    # --- events ---
     def add_event(
         self,
         agent: str,
@@ -163,7 +163,7 @@ class EventStore:
             return [r[0] for r in self._db.execute("SELECT agent FROM events GROUP BY agent ORDER BY MIN(id)")]
 
     def totals(self) -> dict[str, dict[str, float]]:
-        """Suma tokenów i kosztu per agent."""
+        """Sum of tokens and cost per agent."""
         with self._lock:
             rows = self._db.execute(
                 "SELECT agent, SUM(tokens_in) ti, SUM(tokens_out) tout, SUM(cost) c FROM events GROUP BY agent"
@@ -172,7 +172,7 @@ class EventStore:
                 for r in rows}
 
     def usage_for_task(self, run_id: str, task_id: str) -> dict[str, float]:
-        """Suma tokenów i kosztu prób zadania (zdarzenia task_attempt) w danym przebiegu."""
+        """Sum of tokens and cost of task attempts (task_attempt events) in a given run."""
         with self._lock:
             row = self._db.execute(
                 "SELECT SUM(tokens_in) ti, SUM(tokens_out) tout, SUM(cost) c, COUNT(*) n FROM events "
@@ -183,7 +183,7 @@ class EventStore:
         return {"tokens_in": row["ti"] or 0, "tokens_out": row["tout"] or 0, "cost": row["c"] or 0.0,
                 "attempts": row["n"] or 0}
 
-    # --- rejestr delegacji (koszt i opłacalność, patrz ledger.py) ---
+    # --- delegation ledger (cost and profitability, see ledger.py) ---
     def add_delegation(self, *, run_id: str, task_id: str, outcome: str, worker: str = "", worker_tokens_in: int = 0,
                        worker_tokens_out: int = 0, worker_usd: float = 0.0, spec_tokens: int = 0,
                        review_tokens: int = 0, diff_tokens: int = 0, note: str = "") -> int:
@@ -199,7 +199,7 @@ class EventStore:
         with self._lock:
             return [dict(r) for r in self._db.execute("SELECT * FROM delegations ORDER BY id")]
 
-    # --- wiadomości ---
+    # --- messages ---
     def post_message(self, from_agent: str, to_agent: str, body: str, thread: str = "") -> int:
         with self._lock, self._db:
             cur = self._db.execute(
@@ -207,7 +207,7 @@ class EventStore:
                 (time.time(), from_agent, to_agent, thread, body),
             )
             mid = int(cur.lastrowid)
-        # widoczność w TUI: wiadomości (poza sterującymi run:/task:) pokazują się w wierszu "inbox"
+        # TUI visibility: messages (except control run:/task:) show up in the "inbox" row
         if not to_agent.startswith(("run:", "task:")):
             self.add_event("inbox", "message", {"from": from_agent, "to": to_agent, "thread": thread, "body": body})
         return mid

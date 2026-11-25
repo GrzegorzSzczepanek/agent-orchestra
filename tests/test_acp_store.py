@@ -10,7 +10,7 @@ from acp.schema import McpServerStdio
 from orchestra.acp_client import AgentSession, allow_once, reject_all
 from orchestra.store import EventStore
 
-MOCK = [sys.executable, "-m", "orchestra.testing.mock_agent"]
+MOCK = [sys.executable, str(Path(__file__).resolve().parents[1] / "src" / "orchestra" / "testing" / "mock_agent.py")]
 
 
 @pytest.fixture
@@ -35,12 +35,12 @@ def test_store_wal_and_schema(store: EventStore):
 
 
 def test_messages_inbox(store: EventStore):
-    m1 = store.post_message("planner", "impl", "zrób X", thread="t1")
-    store.post_message("planner", "other", "nie dla ciebie")
-    store.post_message("impl", "planner", "gotowe", thread="t1")
-    assert [m.body for m in store.inbox("impl")] == ["zrób X"]
+    m1 = store.post_message("planner", "impl", "do X", thread="t1")
+    store.post_message("planner", "other", "not for you")
+    store.post_message("impl", "planner", "done", thread="t1")
+    assert [m.body for m in store.inbox("impl")] == ["do X"]
     assert store.inbox("impl", since_id=m1) == []
-    assert [m.body for m in store.inbox("planner", thread="t1")] == ["gotowe"]
+    assert [m.body for m in store.inbox("planner", thread="t1")] == ["done"]
 
 
 async def test_acp_session_roundtrip(store: EventStore, tmp_path: Path):
@@ -48,11 +48,11 @@ async def test_acp_session_roundtrip(store: EventStore, tmp_path: Path):
     cwd.mkdir()
     mcp = McpServerStdio(name="orchestra", command="/bin/echo", args=["x"], env=[])
     async with AgentSession("mock", MOCK, str(cwd), store, mcp_servers=[mcp]) as s:
-        res = await s.prompt("cześć")
+        res = await s.prompt("hello")
     assert res.stop_reason == "end_turn"
-    assert res.text == "echo: cześć"
+    assert res.text == "echo: hello"
     assert res.usage == {"input_tokens": 20, "output_tokens": 10, "total_tokens": 30}
-    # new_session dostał cwd i mcpServers
+    # new_session received cwd and mcpServers
     info = json.loads((cwd / ".mock_session.json").read_text())
     assert info["cwd"] == str(cwd) and info["mcp_servers"][0]["name"] == "orchestra"
     kinds = [e.kind for e in store.events(agent="mock")]
@@ -64,14 +64,14 @@ async def test_permission_allowed_and_rejected(store: EventStore, tmp_path: Path
     cwd = tmp_path / "wt"
     cwd.mkdir()
     async with AgentSession("mock", MOCK, str(cwd), store, permission_handler=allow_once) as s:
-        r = await s.prompt("write:a.txt:hej")
-    assert (cwd / "a.txt").read_text() == "hej" and "zapisano" in r.text
+        r = await s.prompt("write:a.txt:hi")
+    assert (cwd / "a.txt").read_text() == "hi" and "saved" in r.text
     kinds = [e.kind for e in store.events(agent="mock")]
     assert {"permission_request", "permission_response", "tool_call", "tool_update"} <= set(kinds)
 
     async with AgentSession("mock2", MOCK, str(cwd), store, permission_handler=reject_all) as s:
-        r = await s.prompt("write:b.txt:nie")
-    assert not (cwd / "b.txt").exists() and "odmowa" in r.text
+        r = await s.prompt("write:b.txt:no")
+    assert not (cwd / "b.txt").exists() and "write refused" in r.text
     resp = [e for e in store.events(agent="mock2") if e.kind == "permission_response"][0]
     assert resp.payload["option_id"] == "reject"
 

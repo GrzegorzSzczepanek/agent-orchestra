@@ -10,7 +10,7 @@ from orchestra.render import render_events
 from orchestra.store import EventStore
 from orchestra.tui import OrchestraApp, PermissionScreen
 
-MOCK = [sys.executable, "-m", "orchestra.testing.mock_agent"]
+MOCK = [sys.executable, str(Path(__file__).resolve().parents[1] / "src" / "orchestra" / "testing" / "mock_agent.py")]
 
 
 def log_text(app, sel="#log") -> str:
@@ -109,9 +109,9 @@ async def test_permission_modal_allows_write(store: EventStore, tmp_path: Path):
         app.query_one("#prompt", Input).value = "write:a.txt:treść"
         await pilot.press("enter")
         await wait_for(pilot, lambda: isinstance(app.screen, PermissionScreen))
-        assert "Zapis a.txt" in str(app.screen.query_one("#perm-title").render())
+        assert "Write a.txt" in str(app.screen.query_one("#perm-title").render())
         await pilot.click("#opt0")
-        await wait_for(pilot, lambda: "zapisano a.txt" in log_text(app))
+        await wait_for(pilot, lambda: "saved a.txt" in log_text(app))
         assert (d / "a.txt").read_text() == "treść"
 
 
@@ -126,7 +126,7 @@ async def test_permission_modal_deny(store: EventStore, tmp_path: Path):
         await pilot.press("enter")
         await wait_for(pilot, lambda: isinstance(app.screen, PermissionScreen))
         await pilot.press("escape")
-        await wait_for(pilot, lambda: "odmowa zapisu" in log_text(app))
+        await wait_for(pilot, lambda: "write refused" in log_text(app))
         assert not (d / "b.txt").exists()
 
 
