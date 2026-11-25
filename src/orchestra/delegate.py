@@ -16,7 +16,7 @@ from typing import Any, Callable
 
 from .commandcode import HeadlessResult, mask_secrets, parse_headless_output, status_for_exit_code
 from .config import Config, ModelRequired
-from .worktree import Worktree, create_worktree, diff, remove_worktree, run, safe_env
+from .worktree import Worktree, create_worktree, diff, remove_byproducts, remove_worktree, run, safe_env
 
 
 @dataclass
@@ -165,6 +165,8 @@ async def delegate(
             res.test_exit_code, res.test_output = tcode, _tail(mask_secrets(tout + terr))
             if tcode != 0:
                 res.status = "tests_failed"
+        # the test run (and the red check) write bytecode into the worktree; drop it before the diff and the commit
+        await remove_byproducts(wt.path)
         res.diff = await diff(wt)
         return res
     except Exception as exc:  # noqa: BLE001 - return the error to the MCP tool instead of aborting the server
