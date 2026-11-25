@@ -1,12 +1,12 @@
-"""Obsługa Command Code (`cmd`): parser trybu headless, kody wyjścia, lista modeli, maskowanie sekretów.
+"""Command Code (`cmd`) support: headless mode parser, exit codes, model list, secret masking.
 
-Format zweryfikowany na `cmd` 1.93.2 oraz w dokumentacji (commandcode.ai/docs/headless):
-- `cmd -p ... --output-format json` wypisuje NDJSON: ramki `{"type":"event","event":{...}}`
-  (nieznane `event.type` należy ignorować) i jedną końcową linię `{"type":"result", ...}`.
-- Linia wyniku: subtype (success | error | max_turns), usage, durationMs, finalText zawsze obecne;
-  sessionId, stopReason opcjonalne; error tylko przy subtype=error.
-- usage ma klucze inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens.
-Parser rozumie też wynik `claude -p --output-format json` (pole `result`, `total_cost_usd`).
+Format verified on `cmd` 1.93.2 and in the docs (commandcode.ai/docs/headless):
+- `cmd -p ... --output-format json` prints NDJSON: `{"type":"event","event":{...}}` frames
+  (unknown `event.type` values must be ignored) and one final `{"type":"result", ...}` line.
+- Result line: subtype (success | error | max_turns), usage, durationMs, finalText are always present;
+  sessionId, stopReason are optional; error only when subtype=error.
+- usage has keys inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens.
+The parser also understands `claude -p --output-format json` output (fields `result`, `total_cost_usd`).
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
-# Kody wyjścia trybu -p (commandcode.ai/docs/reference/cli) zamienione na statusy delegate.
+# Exit codes of -p mode (commandcode.ai/docs/reference/cli) mapped to delegate statuses.
 EXIT_STATUS: dict[int, str] = {
     0: "ok",
     1: "worker_failed",
@@ -40,32 +40,32 @@ def strip_ansi(text: str) -> str:
 
 
 def status_for_exit_code(code: int | None) -> str:
-    """Status dla kodu wyjścia workera; nieznane niezerowe kody to worker_failed."""
+    """Status for a worker exit code; unknown non-zero codes are worker_failed."""
     if code is None:
         return "worker_failed"
     return EXIT_STATUS.get(code, "ok" if code == 0 else "worker_failed")
 
 
-# --- wynik trybu headless -------------------------------------------------------------------
+# --- headless result ------------------------------------------------------------------------
 
 
 @dataclass
 class HeadlessResult:
     final_text: str = ""
-    subtype: str = ""  # success | error | max_turns | "" gdy brak linii wyniku
+    subtype: str = ""  # success | error | max_turns | "" when no result line
     error: str = ""
     session_id: str = ""
     stop_reason: str = ""
-    usage: dict[str, int] = field(default_factory=dict)  # znormalizowane: tokens_in, tokens_out, ...
+    usage: dict[str, int] = field(default_factory=dict)  # normalized: tokens_in, tokens_out, ...
     cost_usd: float = 0.0
-    events: int = 0  # liczba rozpoznanych ramek event
-    parse_errors: int = 0  # linie wyglądające na JSON, których nie dało się sparsować
+    events: int = 0  # number of recognized event frames
+    parse_errors: int = 0  # lines that look like JSON but could not be parsed
     found_result: bool = False
-    is_error: bool = False  # claude ustawia to nawet przy subtype=success (np. limit zużycia)
+    is_error: bool = False  # claude sets this even with subtype=success (e.g. usage limit)
 
 
 def normalize_usage(raw: Mapping[str, Any] | None) -> dict[str, int]:
-    """Sprowadza usage różnych agentów do tokens_in / tokens_out / cache_read / cache_write."""
+    """Normalizes usage of different agents to tokens_in / tokens_out / cache_read / cache_write."""
     raw = raw or {}
 
     def pick(*keys: str) -> int:
@@ -84,7 +84,7 @@ def normalize_usage(raw: Mapping[str, Any] | None) -> dict[str, int]:
 
 
 def parse_headless_output(stdout: str) -> HeadlessResult:
-    """Tolerancyjny parser NDJSON: nieznane ramki ignoruje, błędne linie tylko zlicza."""
+    """Tolerant NDJSON parser: ignores unknown frames, only counts bad lines."""
     res = HeadlessResult()
     for line in stdout.splitlines():
         line = line.strip()
@@ -118,11 +118,11 @@ def parse_headless_output(stdout: str) -> HeadlessResult:
             res.usage = normalize_usage(usage if isinstance(usage, dict) else None)
             cost = obj.get("total_cost_usd", obj.get("costUsd", 0.0))
             res.cost_usd = float(cost) if isinstance(cost, (int, float)) else 0.0
-            # kolejna linia result nadpisze poprzednią: ostatnia wygrywa
+            # a later result line overwrites the previous one: the last wins
     return res
 
 
-# --- lista modeli -------------------------------------------------------------------------
+# --- model list ---------------------------------------------------------------------------
 
 _MODEL_LINE = re.compile(r"^(?P<id>[A-Za-z0-9][\w.:/+-]*)\s{2,}(?P<desc>\S.*)$")
 
@@ -135,10 +135,10 @@ class ModelInfo:
 
 
 def parse_models(text: str) -> list[ModelInfo]:
-    """Parsuje wyjście `cmd --list-models` (sekcje i wiersze `id   opis`).
+    """Parses `cmd --list-models` output (sections and `id   description` rows).
 
-    Wiersze pomocnicze ("Docs:  https://...", "cmd --model x") oraz sekcja "Decision models (headless only)"
-    są pomijane, dzięki czemu liczba modeli zgadza się z nagłówkiem (105 w cmd 1.93.2).
+    Helper rows ("Docs:  https://...", "cmd --model x") and the "Decision models (headless only)" section
+    are skipped, so the model count matches the header (105 in cmd 1.93.2).
     """
     models: list[ModelInfo] = []
     section = ""
@@ -148,7 +148,7 @@ def parse_models(text: str) -> list[ModelInfo]:
             continue
         m = _MODEL_LINE.match(line.strip())
         if section.lower().startswith("decision models"):
-            continue  # specjalne modele tylko dla headless (np. typesafe/jev), nie nadają się na workera kodującego
+            continue  # special headless-only models (e.g. typesafe/jev), not suitable as a coding worker
         if m and not m["id"].endswith(":") and "://" not in m["id"]:
             models.append(ModelInfo(m["id"], m["desc"].strip(), section))
         elif not line.startswith(" ") and "  " not in line.strip():
@@ -157,7 +157,7 @@ def parse_models(text: str) -> list[ModelInfo]:
 
 
 def resolve_model(wanted: str, models: Iterable[ModelInfo]) -> str | None:
-    """Zgodnie z dokumentacją: pełne ID albo część po ostatnim "/", bez rozróżniania wielkości liter."""
+    """Per the docs: full ID or the part after the last "/", case-insensitive."""
     w = wanted.strip().lower()
     if not w:
         return None
@@ -170,7 +170,7 @@ def resolve_model(wanted: str, models: Iterable[ModelInfo]) -> str | None:
     return None
 
 
-# --- sekrety ------------------------------------------------------------------------------
+# --- secrets ------------------------------------------------------------------------------
 
 _SECRET_NAME = re.compile(r"(API_?KEY|TOKEN|SECRET|PASSWORD|PASSWD|AUTH)", re.I)
 _SECRET_PATTERNS = [
@@ -181,7 +181,7 @@ _SECRET_PATTERNS = [
 
 
 def mask_secrets(text: str, env: Mapping[str, str] | None = None) -> str:
-    """Maskuje wartości zmiennych środowiskowych wyglądających na sekrety i typowe wzorce tokenów."""
+    """Masks environment variable values that look like secrets and common token patterns."""
     env = os.environ if env is None else env
     for name, value in env.items():
         if value and len(value) >= 6 and _SECRET_NAME.search(name):
@@ -196,15 +196,15 @@ def mask_secrets(text: str, env: Mapping[str, str] | None = None) -> str:
 
 def _short(value: Any, limit: int = 160) -> str:
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
-    text = " ".join(mask_secrets(text).split())  # maskowanie przed przycięciem, inaczej zostaje początek sekretu
+    text = " ".join(mask_secrets(text).split())  # mask before truncating, otherwise the start of a secret remains
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
 def summarize_frame(line: str) -> tuple[str, str] | None:
-    """Skrót ramki NDJSON z `cmd -p` do podglądu na żywo: (rodzaj, tekst) albo None dla szumu.
+    """Short summary of an NDJSON frame from `cmd -p` for live preview: (kind, text) or None for noise.
 
-    Rodzaje: tool (wywołanie narzędzia), result (wynik narzędzia), text (odpowiedź), think (rozumowanie).
-    Ramki znane z cmd 1.93.2: tool_queued, tool_completed, message_end, thinking_end.
+    Kinds: tool (tool call), result (tool result), text (reply), think (reasoning).
+    Frames known from cmd 1.93.2: tool_queued, tool_completed, message_end, thinking_end.
     """
     line = line.strip()
     if not line.startswith("{"):
@@ -224,7 +224,7 @@ def summarize_frame(line: str) -> tuple[str, str] | None:
     if t == "tool_completed":
         res = ev.get("result")
         text = " ".join(str(r.get("text", "")) for r in res if isinstance(r, dict)) if isinstance(res, list) else res
-        return "result", _short(text or "(brak wyniku)")
+        return "result", _short(text or "(no result)")
     if t == "message_end":
         parts = [c.get("text", "") for c in ev.get("content", []) if isinstance(c, dict) and c.get("type") == "text"]
         text = " ".join(p for p in parts if p).strip()

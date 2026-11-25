@@ -1,4 +1,4 @@
-"""Rozmowa z rolami (planner, reviewer) przez tryb headless lub ACP: zwraca tekst odpowiedzi."""
+"""Conversation with roles (planner, reviewer) via headless mode or ACP: returns the reply text."""
 
 from __future__ import annotations
 
@@ -30,10 +30,10 @@ def headless_ask(
     timeout_s: float = 600,
     store: EventStore | None = None,
 ) -> Ask:
-    """Pytanie do agenta roli przez jego komendę headless (np. `claude -p ... --output-format json`).
+    """Question to a role's agent via its headless command (e.g. `claude -p ... --output-format json`).
 
-    Gdy przekazano store, każde wywołanie trafia do SQLite jako `role_attempt` z tokenami i kosztem,
-    dzięki czemu tabela kosztów obejmuje też planistę i recenzenta.
+    When a store is passed, each call is written to SQLite as `role_attempt` with tokens and cost,
+    so the cost table also covers the planner and reviewer.
     """
     agent = config.agent_for_role(role)
 
@@ -52,11 +52,11 @@ def headless_ask(
             code, out, err = await run(argv, repo, timeout=timeout_s, env=safe_env(agent.env_passthrough))
         except FileNotFoundError as exc:
             log("worker_not_found")
-            raise AskError(f"brak binarki {argv[0]} dla roli {role}") from exc
+            raise AskError(f"missing binary {argv[0]} for role {role}") from exc
         hr = parse_headless_output(out)
         if code != 0 or hr.subtype == "error" or hr.is_error:
             log("error", hr)
-            raise AskError(mask_secrets(f"rola {role} zwróciła błąd (kod {code}): {hr.error or err.strip()[-400:]}"))
+            raise AskError(mask_secrets(f"role {role} returned an error (code {code}): {hr.error or err.strip()[-400:]}"))
         log("ok", hr)
         return hr.final_text if hr.found_result else out
 
@@ -64,7 +64,7 @@ def headless_ask(
 
 
 def acp_ask(config: Config, role: str, repo: str | Path, store: EventStore) -> Ask:
-    """Pytanie do agenta roli przez ACP (nowa sesja na pytanie, uprawnienia domyślnie odrzucane)."""
+    """Question to a role's agent via ACP (new session per question, permissions rejected by default)."""
     agent = config.agent_for_role(role)
 
     async def ask(prompt: str) -> str:
@@ -78,7 +78,7 @@ def acp_ask(config: Config, role: str, repo: str | Path, store: EventStore) -> A
 async def repo_files(repo: str | Path, limit: int = 200) -> str:
     out = await git(["ls-files"], repo)
     lines = out.splitlines()
-    more = f"\n... (+{len(lines) - limit} plików)" if len(lines) > limit else ""
+    more = f"\n... (+{len(lines) - limit} files)" if len(lines) > limit else ""
     return "\n".join(lines[:limit]) + more
 
 
@@ -94,9 +94,9 @@ Reply with exactly `APPROVE` if it is correct and minimal, otherwise `CHANGES: `
 
 
 def parse_verdict(reply: str) -> Verdict:
-    """APPROVE na początku albo na końcu odpowiedzi to zatwierdzenie (modele lubią dopisać wstęp przed werdyktem).
+    """APPROVE at the start or end of the reply is an approval (models like to add a preamble before the verdict).
 
-    Wystąpienie `CHANGES:` wygrywa: wszystko po nim to uwagi. Brak werdyktu liczy się jako uwagi.
+    A `CHANGES:` occurrence wins: everything after it is remarks. A missing verdict counts as remarks.
     """
     lines = [ln.strip(" \t*`_.!") for ln in reply.splitlines() if ln.strip()]
     idx = reply.upper().find("CHANGES:")

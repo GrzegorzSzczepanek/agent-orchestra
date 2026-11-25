@@ -1,7 +1,7 @@
-"""Plan zadań jako DAG: model danych (pydantic), walidacja i parsowanie odpowiedzi planisty.
+"""Task plan as a DAG: data model (pydantic), validation and parsing of the planner's reply.
 
-Plan zwraca rola `planner` (np. Claude) jako JSON zgodny z `Plan.model_json_schema()`.
-Zależności są sprawdzane przez graphlib (stdlib), więc cykle i brakujące zależności wychodzą od razu.
+The `planner` role (e.g. Claude) returns the plan as JSON matching `Plan.model_json_schema()`.
+Dependencies are checked with graphlib (stdlib), so cycles and missing dependencies surface immediately.
 """
 
 from __future__ import annotations
@@ -19,27 +19,27 @@ _ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
 
 
 class PlanError(ValueError):
-    """Odpowiedź planisty nie jest poprawnym planem."""
+    """The planner's reply is not a valid plan."""
 
 
 class PlanTask(BaseModel):
-    id: str = Field(description="Krótki unikalny identyfikator: małe litery, cyfry, - lub _")
-    description: str = Field(min_length=1, description="Co dokładnie zaimplementować, samowystarczalnie")
-    files: list[str] = Field(default_factory=list, description="Pliki do zmiany lub utworzenia (ścieżki względne)")
-    acceptance: list[str] = Field(min_length=1, description="Kryteria akceptacji, każde sprawdzalne testem")
-    test_cmd: str = Field(min_length=1, description='Komenda testowa bez powłoki, np. "pytest -q tests/test_x.py"')
-    cwd: str = Field(default="", description="Podkatalog repo, w którym działa worker i test_cmd (np. \"code\"); pusty to korzeń repo")
-    difficulty: Difficulty = Field(default="easy", description="easy i medium robi tani worker, hard mocny model")
-    depends_on: list[str] = Field(default_factory=list, description="Identyfikatory zadań, które muszą być gotowe")
+    id: str = Field(description="Short unique identifier: lowercase letters, digits, - or _")
+    description: str = Field(min_length=1, description="Exactly what to implement, self-contained")
+    files: list[str] = Field(default_factory=list, description="Files to change or create (relative paths)")
+    acceptance: list[str] = Field(min_length=1, description="Acceptance criteria, each verifiable by a test")
+    test_cmd: str = Field(min_length=1, description='Test command without shell, e.g. "pytest -q tests/test_x.py"')
+    cwd: str = Field(default="", description="Repo subdirectory where the worker and test_cmd run (e.g. \"code\"); empty means repo root")
+    difficulty: Difficulty = Field(default="easy", description="easy and medium go to the cheap worker, hard to the strong model")
+    depends_on: list[str] = Field(default_factory=list, description="Task ids that must be done first")
     expect_red: bool = Field(default=True, description=(
-        "Czy test_cmd ma failować przed zmianami workera (red check). Ustaw false tylko dla refaktoryzacji i testów "
-        "charakteryzujących, gdzie test przechodzi już na starcie i ma przechodzić po zmianie"))
+        "Whether test_cmd must fail before the worker's changes (red check). Set false only for refactors and "
+        "characterization tests, where the test already passes at the start and must still pass after the change"))
 
     @field_validator("id")
     @classmethod
     def _id_ok(cls, v: str) -> str:
         if not _ID.match(v):
-            raise ValueError(f"niepoprawne id zadania: {v!r}")
+            raise ValueError(f"invalid task id: {v!r}")
         return v
 
     @field_validator("test_cmd")
@@ -47,16 +47,16 @@ class PlanTask(BaseModel):
     def _test_cmd_ok(cls, v: str) -> str:
         try:
             if not shlex.split(v):
-                raise ValueError("pusta komenda testowa")
+                raise ValueError("empty test command")
         except ValueError as exc:
-            raise ValueError(f"test_cmd nie daje się rozbić przez shlex: {exc}") from exc
+            raise ValueError(f"test_cmd cannot be split by shlex: {exc}") from exc
         return v
 
     @field_validator("cwd")
     @classmethod
     def _cwd_relative(cls, v: str) -> str:
         if v.startswith(("/", "~")) or ".." in v.replace("\\", "/").split("/"):
-            raise ValueError(f"cwd musi być względny i wewnątrz repo: {v!r}")
+            raise ValueError(f"cwd must be relative and inside the repo: {v!r}")
         return v
 
     @field_validator("files")
@@ -64,7 +64,7 @@ class PlanTask(BaseModel):
     def _files_relative(cls, v: list[str]) -> list[str]:
         for f in v:
             if f.startswith(("/", "~")) or ".." in f.replace("\\", "/").split("/"):
-                raise ValueError(f"ścieżka musi być względna i wewnątrz repo: {f!r}")
+                raise ValueError(f"path must be relative and inside the repo: {f!r}")
         return v
 
 
@@ -77,18 +77,18 @@ class Plan(BaseModel):
         ids = [t.id for t in self.tasks]
         dup = {i for i in ids if ids.count(i) > 1}
         if dup:
-            raise ValueError(f"powtórzone id zadań: {sorted(dup)}")
+            raise ValueError(f"duplicate task ids: {sorted(dup)}")
         known = set(ids)
         for t in self.tasks:
             missing = [d for d in t.depends_on if d not in known]
             if missing:
-                raise ValueError(f"zadanie {t.id} zależy od nieznanych zadań: {missing}")
+                raise ValueError(f"task {t.id} depends on unknown tasks: {missing}")
             if t.id in t.depends_on:
-                raise ValueError(f"zadanie {t.id} zależy samo od siebie")
+                raise ValueError(f"task {t.id} depends on itself")
         try:
             TopologicalSorter({t.id: set(t.depends_on) for t in self.tasks}).prepare()
         except CycleError as exc:
-            raise ValueError(f"cykl w zależnościach: {exc.args[1]}") from exc
+            raise ValueError(f"cycle in dependencies: {exc.args[1]}") from exc
         return self
 
     def by_id(self) -> dict[str, PlanTask]:
@@ -103,7 +103,7 @@ def plan_schema() -> dict[str, Any]:
 
 
 def extract_json(text: str) -> Any:
-    """Wyciąga pierwszy obiekt JSON z odpowiedzi modelu (blok ```json albo goły obiekt)."""
+    """Extracts the first JSON object from the model's reply (```json block or bare object)."""
     decoder = json.JSONDecoder()
     candidates = [m.group(1) for m in re.finditer(r"```(?:json)?\s*(.*?)```", text, re.S)] + [text]
     for chunk in candidates:
@@ -114,7 +114,7 @@ def extract_json(text: str) -> Any:
                 continue
             if isinstance(obj, dict):
                 return obj
-    raise PlanError("w odpowiedzi nie znaleziono obiektu JSON")
+    raise PlanError("no JSON object found in the reply")
 
 
 def parse_plan(text: str) -> Plan:
@@ -161,7 +161,7 @@ async def make_plan(
     repo_files: str = "",
     retries: int = 1,
 ) -> Plan:
-    """Prosi planistę o plan i waliduje go; przy błędzie wysyła poprawkę (domyślnie 1 raz)."""
+    """Asks the planner for a plan and validates it; on error sends a correction (once by default)."""
     prompt = PLANNER_PROMPT.format(schema=json.dumps(plan_schema(), ensure_ascii=False), files=repo_files or "(unknown)", goal=goal)
     last_error = ""
     for attempt in range(retries + 1):
@@ -171,4 +171,4 @@ async def make_plan(
             return parse_plan(reply)
         except PlanError as exc:
             last_error = str(exc)
-    raise PlanError(f"planista nie zwrócił poprawnego planu: {last_error}")
+    raise PlanError(f"planner did not return a valid plan: {last_error}")
