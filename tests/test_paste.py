@@ -31,7 +31,7 @@ async def test_pasted_block_is_kept_and_sent_with_enter(tmp_path: Path):
         prompt = app.query_one("#prompt", PromptArea)
         assert isinstance(prompt, TextArea)
         prompt.focus()
-        prompt.post_message(events.Paste(BLOCK))
+        app.post_message(events.Paste(BLOCK))  # the way a terminal paste arrives
         await pilot.pause(0.2)
         assert prompt.value == BLOCK
         assert not store.events(kind="prompt_start")  # pasting alone sends nothing
@@ -59,7 +59,7 @@ async def test_message_dialog_accepts_a_block(tmp_path: Path):
         await pilot.pause(0.2)
         field = app.screen.query_one("#msg-text", PromptArea)
         field.focus()
-        field.post_message(events.Paste(BLOCK))
+        app.post_message(events.Paste(BLOCK))
         await pilot.pause(0.2)
         await pilot.press("enter")
         await pilot.pause(0.2)

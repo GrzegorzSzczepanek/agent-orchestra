@@ -115,6 +115,8 @@ Everything is visible at once, and every action has both a button and a function
 | ⛔ Cancel | F6 | kills the working workers and ends the run (with confirmation) |
 | ± Diff | F2 | diff of the selected agent's worktree |
 
+The prompt, message, hint and goal fields keep pasted multi-line blocks: Enter sends, Ctrl+J adds a line.
+
 Select a row on the left and the text field changes meaning: for an agent it is a prompt, for a task it is a hint (the line under the log tells you what will happen).
 
 When a worker attempt fails its tests, you see the cause, not just a status:

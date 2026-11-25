@@ -113,6 +113,8 @@ Wszystko jest widoczne od razu, a każda akcja ma przycisk i F-klawisz (skróty 
 | ⛔ Cancel | F6 | zabija pracujące workery i kończy przebieg (z potwierdzeniem) |
 | ± Diff | F2 | diff worktree zaznaczonego agenta |
 
+Pola promptu, wiadomości, wskazówki i celu przyjmują wklejone bloki w wielu liniach: Enter wysyła, Ctrl+J dodaje linię.
+
 Zaznacz wiersz po lewej, a pole tekstowe zmienia znaczenie: dla agenta to prompt, dla zadania to wskazówka (podpowiedź pod logiem mówi, co się stanie).
 
 Gdy próba workera nie przechodzi testów, widać przyczynę, a nie tylko status:
