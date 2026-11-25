@@ -1,10 +1,5 @@
 #!/usr/bin/env bash
-# Globalny launcher: orch [KATALOG] [--client auto|claude|opencode|codex|none] [--no-watch] [--simple-watch] [--agents a,b] [-- argumenty klienta]
-# Odpala klienta (domyslnie pierwszy znaleziony: claude, opencode, codex) w repo z serwerem orchestra i skillem rozbijania zadan,
-# a obok otwiera TUI (orchestra-tui): agenci, strumien, prompt, Ctrl+N nowy agent, F2 diff. Panele w tmux (poza tmux orch sam startuje sesje tmux), bez tmux nowe okno Terminal.app.
-# Bez zadnego klienta (--client none albo nic w PATH) startuje samo TUI: przycisk Plan przyjmuje cel (planuje wybrany agent) albo plik planu.
-# --simple-watch: tylko podglad zadan run_plan (bez promptow), --agents: sesje startowane od razu (domyslnie pierwszy dostepny z agents.toml).
-# Nic nie trzeba rejestrowac globalnie: serwer MCP jest podawany klientowi przy starcie.
+# Global launcher: orch [DIRECTORY] [--client auto|claude|opencode|codex|none] [--no-watch] [--simple-watch] [--agents a,b] [-- client args]
 set -euo pipefail
 
 SELF="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}")"
@@ -19,35 +14,71 @@ AGENTS=""
 CLIENT=auto
 CLIENT_ARGS=()
 
+usage() {
+  cat <<'EOF'
+Start a coding client with the orchestra MCP server and a live TUI beside it.
+
+By default the first client found is started (claude, opencode, codex) in the
+repository with the orchestra server and the task-splitting skill, and the TUI
+opens next to it: agents, stream, prompt, Ctrl+N new agent, F2 diff. Panes run
+in tmux (outside tmux orch starts a tmux session itself); without tmux a new
+Terminal.app window opens. With no client (--client none or none in PATH) only
+the TUI starts: the Plan button accepts a goal (plans with the selected agent)
+or a plan file. Nothing needs to be registered globally: the MCP server is
+handed to the client at startup.
+
+Usage:
+  orch [DIRECTORY] [options] [-- client args]
+
+Options:
+  DIRECTORY          Git repository to work in (default: current directory).
+  --client NAME      Client to start: auto, claude, opencode, codex or none
+                     (default: auto, the first one found in PATH).
+  --no-watch         Do not open the TUI beside the client.
+  --simple-watch     Watch only run_plan tasks, without prompts.
+  --agents a,b       Sessions to start right away (default: first available
+                     from agents.toml).
+  -h, --help         Show this help and exit.
+  --                 Pass all remaining arguments to the client.
+
+Examples:
+  orch
+  orch ~/src/project
+  orch --client claude --agents claude,commandcode
+  orch --client none
+  orch --simple-watch -- --model sonnet
+EOF
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-watch) WATCH=0; shift ;;
     --simple-watch) SIMPLE=1; shift ;;
-    --agents) AGENTS="${2:?brak wartosci dla --agents}"; shift 2 ;;
-    --client) CLIENT="${2:?brak wartosci dla --client}"; shift 2 ;;
-    -h|--help) sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --agents) AGENTS="${2:?missing value for --agents}"; shift 2 ;;
+    --client) CLIENT="${2:?missing value for --client}"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
     --) shift; CLIENT_ARGS=("$@"); break ;;
-    -*) echo "Nieznana opcja: $1 (argumenty dla klienta po --)" >&2; exit 2 ;;
+    -*) echo "Unknown option: $1 (client arguments go after --)" >&2; exit 2 ;;
     *) REPO="$1"; shift ;;
   esac
 done
 
-[[ -x "$BIN/orchestra-mcp" ]] || { echo "Brak .venv w $ROOT. Uruchom: $ROOT/scripts/setup.sh" >&2; exit 1; }
+[[ -x "$BIN/orchestra-mcp" ]] || { echo "No .venv in $ROOT. Run: $ROOT/scripts/setup.sh" >&2; exit 1; }
 REPO="$(cd "$REPO" && pwd)"
-git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 || { echo "To nie jest repozytorium git: $REPO (git init, potem commit)" >&2; exit 1; }
-git -C "$REPO" rev-parse HEAD >/dev/null 2>&1 || { echo "Repo nie ma zadnego commita, workery startuja z HEAD." >&2; exit 1; }
+git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 || { echo "Not a git repository: $REPO (git init, then commit)" >&2; exit 1; }
+git -C "$REPO" rev-parse HEAD >/dev/null 2>&1 || { echo "Repository has no commits yet, workers start from HEAD." >&2; exit 1; }
 if [[ -n "$(git -C "$REPO" status --porcelain 2>/dev/null)" ]]; then
-  echo "Uwaga: sa niezacommitowane zmiany. Workery widza tylko HEAD." >&2
+  echo "Warning: there are uncommitted changes. Workers see only HEAD." >&2
 fi
 
 CONFIG="$ROOT/agents.toml"
 CLIENT="$("$BIN/orchestra-client" --detect --client "$CLIENT" --repo "$REPO" --config "$CONFIG" --skill "$SKILL")" || exit $?
 if [[ "$CLIENT" == none ]]; then
-  echo "Nie znaleziono klienta (claude, opencode, codex): uruchamiam samo TUI. Przycisk Plan: wpisz cel albo wskaz plik planu." >&2
+  echo "No client found (claude, opencode, codex): starting the TUI only. Plan button: enter a goal or pick a plan file." >&2
   exec "$BIN/orchestra-tui" --repo "$REPO" --config "$CONFIG" ${AGENTS:+--agents "$AGENTS"}
 fi
 
-# Poza tmux: odpal siebie w nowej sesji tmux (Claude po lewej, TUI po prawej), wszystko w jednym oknie terminala.
+# Outside tmux: start yourself in a new tmux session (Claude on the left, TUI on the right), all in one terminal window.
 if [[ $WATCH -eq 1 && -z "${TMUX:-}" ]] && command -v tmux >/dev/null && [[ -t 0 ]]; then
   SESSION="orch-$(basename "$REPO" | tr -c 'A-Za-z0-9\n' '-')-$$"
   INNER="$(printf '%q ' "$SELF" "${ORIG_ARGS[@]}")"
@@ -66,9 +97,9 @@ if [[ $WATCH -eq 1 ]]; then
     tmux split-window -h -d -l 45% -t "${TMUX_PANE:-}" "$WATCH_CMD"
   elif [[ "$(uname)" == Darwin ]] && command -v osascript >/dev/null; then
     osascript -e "tell application \"Terminal\" to do script \"$WATCH_CMD\"" >/dev/null \
-      || echo "Nie udalo sie otworzyc okna. Recznie: $WATCH_CMD" >&2
+      || echo "Could not open a window. Manually: $WATCH_CMD" >&2
   else
-    echo "Podglad uruchom w drugim terminalu: $WATCH_CMD"
+    echo "Start the watch in another terminal: $WATCH_CMD"
   fi
 fi
 

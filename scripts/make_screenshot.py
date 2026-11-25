@@ -1,6 +1,6 @@
-"""Generuje zrzuty TUI do README (docs/*.png) na agentach mock i wymyślonym przebiegu run_plan.
+"""Generate TUI screenshots for the README (docs/*.png) from mock agents and a made-up run_plan.
 
-Użycie: .venv/bin/python scripts/make_screenshot.py   (PNG wymaga rsvg-convert, inaczej zostają pliki SVG)
+Usage: .venv/bin/python scripts/make_screenshot.py   (PNG requires rsvg-convert, otherwise SVG files remain)
 """
 
 import asyncio
@@ -35,10 +35,10 @@ def step(store: EventStore, task: str, kind: str, text: str) -> None:
 
 
 def seed(store: EventStore) -> None:
-    plan = [("slugify", [], "funkcja slugify w text_utils.py"), ("parse_duration", [], "parser czasu trwania w durations.py"),
-            ("mean", [], "średnia z walidacją w stats.py"), ("report", ["slugify", "mean"], "raport łączący moduły w report.py")]
+    plan = [("slugify", [], "slugify function in text_utils.py"), ("parse_duration", [], "duration parser in durations.py"),
+            ("mean", [], "average with validation in stats.py"), ("report", ["slugify", "mean"], "report combining the modules in report.py")]
     store.add_event("scheduler", "run_start", {
-        "run_id": RUN, "goal": "Dodaj cztery małe moduły z testami", "tasks": 4, "parallel": 2,
+        "run_id": RUN, "goal": "Add four small modules with tests", "tasks": 4, "parallel": 2,
         "integration_branch": f"orchestra/run-{RUN}",
         "plan": [{"id": i, "difficulty": "easy", "depends_on": d, "description": t} for i, d, t in plan]})
     for t in ("slugify", "parse_duration"):
@@ -68,8 +68,8 @@ def seed(store: EventStore) -> None:
     step(store, "mean", "tool", "write_file: src/stats.py")
     step(store, "mean", "result", "File created successfully")
     store.post_message("reviewer", "implementer:slugify", "APPROVE")
-    store.post_message("claude", "commandcode", "Masz już parser czasu? Potrzebuję go w report.py.")
-    store.post_message("commandcode", "claude", "Tak, durations.parse_duration, podpinam w report.py po zielonych testach.")
+    store.post_message("claude", "commandcode", "Do you have the duration parser yet? I need it in report.py.")
+    store.post_message("commandcode", "claude", "Yes, durations.parse_duration, wiring it into report.py after green tests.")
 
 
 async def main() -> None:
@@ -117,9 +117,9 @@ async def main() -> None:
         await pilot.pause(0.4)
         save(app, "tui-new-agent")
 
-    # bez Claude'a: rola planner i reviewer przechodzi na dostępnego agenta, okna Role i Plan
-    absent = ("claude", "codex")  # tych binarek "nie ma", więc role przechodzą na commandcode
-    missing = {k: AgentConfig(name=k, acp=tuple(MOCK), headless=("nie-ma-w-path", "{task}") if k in absent
+    # without Claude: the planner and reviewer roles move to an available agent, the Role and Plan windows
+    absent = ("claude", "codex")  # these binaries "do not exist", so the roles move to commandcode
+    missing = {k: AgentConfig(name=k, acp=tuple(MOCK), headless=("not-in-path", "{task}") if k in absent
                               else (sys.executable, "{task}"), tier=a.tier, default_model=a.default_model)
                for k, a in cfg.agents.items()}
     cfg2 = Config(agents=missing, roles=dict(cfg.roles), fallback_order=("claude", "commandcode", "opencode", "codex"))
@@ -135,7 +135,7 @@ async def main() -> None:
         await pilot.pause(0.3)
         await pilot.press("f7")
         await pilot.pause(0.5)
-        app2.screen.query_one("#plan-goal").value = "dodaj walidację e-maili wraz z testami pytest"
+        app2.screen.query_one("#plan-goal").value = "add e-mail validation with pytest tests"
         await pilot.pause(0.2)
         save(app2, "tui-plan")
 
