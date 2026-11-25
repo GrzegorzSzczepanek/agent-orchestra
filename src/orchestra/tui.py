@@ -11,12 +11,13 @@ from typing import Any
 
 from acp.schema import PermissionOption, ToolCallUpdate
 from rich.syntax import Syntax
-from textual import on
+from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Button, DataTable, Footer, Header, Input, Label, RichLog, Select, Static
+from textual.widgets import Button, DataTable, Footer, Header, Input, Label, RichLog, Select, Static, TextArea
 
 from .config import ROLE_NAMES, Config, save_overrides
 from .controller import AgentSpec, Controller, orchestra_mcp_server
@@ -37,6 +38,56 @@ BUTTONS = (("b-new", "＋ Agent"), ("b-plan", "▶ Plan"), ("b-msg", "✉ Msg"),
            ("b-detail", "🔎 Info"), ("b-cancel", "⛔ Cancel"), ("b-diff", "± Diff"), ("b-roles", "⚙ Roles"))
 STATUS_ICON = {"done": "✓ done", "idle": "○ idle", "working": "● working", "waiting": "? waiting", "error": "✗ error",
                "stopped": "· stopped", "": "·"}
+
+
+class PromptArea(TextArea):
+    """Multi-line prompt: Enter submits, Ctrl+J or Shift+Enter adds a line, Tab moves focus."""
+
+    DEFAULT_CSS = """
+    PromptArea {
+        height: auto;
+        min-height: 3;
+        max-height: 10;
+    }
+    """
+
+    @dataclass
+    class Submitted(Message):
+        """Posted when the user presses Enter in the prompt."""
+
+        value: str
+        prompt: "PromptArea"
+
+        @property
+        def control(self) -> "PromptArea":
+            return self.prompt
+
+    def __init__(self, text: str = "", *, placeholder: str = "", id: str | None = None,
+                 classes: str | None = None) -> None:
+        super().__init__(text, soft_wrap=True, tab_behavior="focus", show_line_numbers=False,
+                         highlight_cursor_line=False, placeholder=placeholder, id=id, classes=classes)
+
+    @property
+    def value(self) -> str:
+        return self.text
+
+    @value.setter
+    def value(self, value: str) -> None:
+        self.load_text(value)
+        self.move_cursor((0, 0))
+
+    async def _on_key(self, event: events.Key) -> None:
+        if event.key == "enter":
+            event.stop()
+            event.prevent_default()
+            self.post_message(self.Submitted(self.value, self))
+            return
+        if event.key in ("ctrl+j", "shift+enter"):
+            event.stop()
+            event.prevent_default()
+            self._replace_via_keyboard("\n", *self.selection)
+            return
+        await super()._on_key(event)
 
 
 class PermissionScreen(ModalScreen[str | None]):
@@ -390,7 +441,7 @@ class OrchestraApp(App[None]):
                 yield RichLog(id="log", wrap=True, min_width=20, highlight=False, markup=False)
                 yield RichLog(id="diff", wrap=False, highlight=False, markup=False)
                 yield Static("", id="hint")
-                yield Input(placeholder="Select an agent or a task on the left", id="prompt")
+                yield PromptArea(placeholder="Select an agent or a task on the left (Ctrl+J new line)", id="prompt")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -399,7 +450,7 @@ class OrchestraApp(App[None]):
         self._log = self.query_one("#log", RichLog)
         self._diff = self.query_one("#diff", RichLog)
         self._hint = self.query_one("#hint", Static)
-        self._prompt = self.query_one("#prompt", Input)
+        self._prompt = self.query_one("#prompt", PromptArea)
         self._rolebar = self.query_one("#rolebar", Static)
         self._jobs: set[asyncio.Task] = set()
         # Tab goes from the table straight to the prompt (scroll logs with the mouse, use buttons or F keys)
@@ -550,10 +601,10 @@ class OrchestraApp(App[None]):
             self.select_agent(name)
 
     # --- prompt ---
-    @on(Input.Submitted, "#prompt")
-    def submit_prompt(self, event: Input.Submitted) -> None:
+    @on(PromptArea.Submitted, "#prompt")
+    def submit_prompt(self, event: PromptArea.Submitted) -> None:
         text = event.value.strip()
-        event.input.value = ""
+        event.prompt.value = ""
         if text.startswith("/"):
             self.run_command(text)
             return
