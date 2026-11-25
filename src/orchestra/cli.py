@@ -1,9 +1,10 @@
-"""Punkt wejścia `orchestra`: doctor, plan, run."""
+"""`orchestra` entry point: doctor, plan, run and friends."""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import shutil
 import sys
 from pathlib import Path
 
@@ -11,83 +12,172 @@ from .config import load_config
 from .worktree import ensure_local_exclude
 
 
-def _add_common(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--config", default="agents.toml", help="ścieżka do agents.toml (domyślnie ./agents.toml)")
+class _HelpFormatter(argparse.RawDescriptionHelpFormatter):
+    """Keeps hand written descriptions and examples as they are; width follows the terminal, at most 98."""
+
+    def __init__(self, prog: str):
+        super().__init__(prog, max_help_position=30, width=min(shutil.get_terminal_size().columns - 2, 98))
+
+
+MAIN_DESCRIPTION = """\
+Cost-aware orchestrator for coding agents.
+A strong model plans and reviews, cheap workers implement. Every task runs in its own git
+worktree and is merged into an integration branch only when its test command passes.
+
+Quick start:
+  1. orchestra doctor                  check tools, logins and models
+  2. orchestra plan "add a median()"   the planner writes plan.json (or: orchestra init-plan)
+  3. orchestra run plan.json           workers implement, tests gate every task
+  4. git merge --no-ff BRANCH          after you reviewed the integration branch"""
+
+MAIN_EPILOG = """\
+Examples:
+  orchestra doctor
+  orchestra plan "add input validation" --repo ~/src/project
+  orchestra run plan.json --parallel 3 --rounds 1
+  orchestra watch --repo .
+  orchestra roles --set planner=opencode
+
+Run `orchestra <command> --help` for the options and examples of one command.
+Interactive terminal UI: `orch` (launcher) or `orchestra-tui`."""
+
+
+def _add_command(sub, name: str, summary: str, description: str, *examples: str) -> argparse.ArgumentParser:
+    return sub.add_parser(name, help=summary, description=description, formatter_class=_HelpFormatter,
+                          epilog="Examples:\n" + "\n".join(f"  {e}" for e in examples))
+
+
+def _add_config(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--config", default="agents.toml", help="path to agents.toml (default: ./agents.toml)")
+
+
+def _add_repo(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--repo", default=".", help="git repository to work in (default: current directory)")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="orchestra", description="Orkiestrator agentów kodujących")
-    sub = ap.add_subparsers(dest="command", required=True)
+    ap = argparse.ArgumentParser(prog="orchestra", description=MAIN_DESCRIPTION, epilog=MAIN_EPILOG,
+                                 formatter_class=_HelpFormatter)
+    sub = ap.add_subparsers(dest="command", title="commands", metavar="<command>")
 
-    d = sub.add_parser("doctor", help="diagnostyka: cmd, logowanie, modele, headless, ACP, inni agenci")
-    _add_common(d)
+    d = _add_command(sub, "doctor", "check tools, logins, models and agents",
+                     "Diagnose the setup: cmd binary, login, model list, headless mode, ACP and other agents.\n"
+                     "Prints a PASS/FAIL report and saves it as JSON without secrets.",
+                     "orchestra doctor",
+                     "orchestra doctor --smoke --model deepseek/deepseek-v4.1-flash",
+                     "orchestra doctor --no-others --json report.json")
+    _add_config(d)
     d.add_argument("--smoke", action="store_true",
-                   help="wykonaj prawdziwy test headless (cmd -p), zużywa niewielką ilość kredytów")
-    d.add_argument("--model", default="", help="ID modelu do sprawdzenia (domyślnie z agents.toml lub zmiennej)")
-    d.add_argument("--timeout", type=float, default=30, help="limit czasu pojedynczej próby w sekundach")
-    d.add_argument("--no-others", action="store_true", help="pomiń agentów innych niż commandcode")
-    d.add_argument("--json", default="orchestra-doctor.json", help="gdzie zapisać raport JSON")
+                   help="run a real headless test (cmd -p), uses a small amount of credits")
+    d.add_argument("--model", default="", help="model ID to check (default: from agents.toml or its env variable)")
+    d.add_argument("--timeout", type=float, default=30, help="time limit of one probe in seconds (default: 30)")
+    d.add_argument("--no-others", action="store_true", help="skip agents other than commandcode")
+    d.add_argument("--json", default="orchestra-doctor.json", help="JSON report path (default: %(default)s)")
 
-    w = sub.add_parser("watch", help="podgląd na żywo przebiegów i delegowań (TUI, tylko odczyt)")
-    w.add_argument("--repo", default=".", help="repozytorium, którego log zdarzeń oglądasz")
-    w.add_argument("--db", default=None, help="ścieżka bazy zdarzeń (domyślnie <repo>/.orchestra/events.db)")
+    pl = _add_command(sub, "plan", "let the planner turn a goal into plan.json",
+                      "The planner role splits a goal into a dependency graph of small, testable tasks.",
+                      'orchestra plan "add a median function"',
+                      'orchestra plan "split the parser" --out parser.json --via acp')
+    pl.add_argument("goal", help="what you want to achieve, in one sentence")
+    _add_config(pl)
+    _add_repo(pl)
+    pl.add_argument("--out", default="plan.json", help="where to save the plan (default: %(default)s)")
+    pl.add_argument("--via", choices=["headless", "acp"], default="headless",
+                    help="how to talk to the planner (default: %(default)s)")
+    pl.add_argument("--model", default="", help="planner model (default: from the agent configuration)")
 
-    ro = sub.add_parser("roles", help="kto pełni role planner, reviewer, implementer (z fallbackiem) i zmiana wyboru")
-    _add_common(ro)
-    ro.add_argument("--repo", default=".")
-    ro.add_argument("--set", action="append", default=[], metavar="ROLA=AGENT",
-                    help="wybierz agenta roli, np. planner=opencode (pusta wartość kasuje wybór)")
+    ip = _add_command(sub, "init-plan", "write a plan template to fill in by hand",
+                      "Write a JSON plan template so you can split the work yourself, then use `orchestra run`.",
+                      "orchestra init-plan",
+                      "orchestra init-plan my-plan.json")
+    ip.add_argument("out", nargs="?", default="plan.json", help="file to create (default: %(default)s)")
+
+    r = _add_command(sub, "run", "execute a plan with cheap workers",
+                     "Execute a plan: one worktree per task, test gate, retries, escalation and merge into\n"
+                     "an integration branch. Workers only see committed changes (HEAD).",
+                     "orchestra run plan.json",
+                     "orchestra run plan.json --parallel 3 --rounds 1",
+                     'orchestra run plan.json --integration-test "python3 -m pytest -q" --no-escalate')
+    r.add_argument("plan", help="plan JSON file")
+    _add_config(r)
+    _add_repo(r)
+    r.add_argument("--report", default="", help="JSON report path (default: .orchestra/runs/<id>.json)")
+    workers = r.add_argument_group("workers")
+    workers.add_argument("--worker", default="", help="override the agent of the implementer role")
+    workers.add_argument("--model", default="", help="cheap worker model (default: variable from agents.toml)")
+    workers.add_argument("--parallel", type=int, default=2, help="tasks at once, 1 to 3 (default: 2)")
+    workers.add_argument("--timeout", type=float, default=900,
+                         help="time limit of one worker in seconds (default: 900)")
+    gates = r.add_argument_group("quality gates")
+    gates.add_argument("--rounds", type=int, default=0, help="review rounds after green tests, 0 to 2 (default: 0)")
+    gates.add_argument("--integration-test", default="", metavar="CMD",
+                       help="full tests after every merge (a failing merge is reverted)")
+    gates.add_argument("--no-red-check", action="store_true",
+                       help="do not require test_cmd to fail before the worker's changes")
+    limits = r.add_argument_group("failures and budgets")
+    limits.add_argument("--max-failures", type=int, default=2,
+                        help="cheap worker failures in a row before escalation (default: 2)")
+    limits.add_argument("--no-escalate", action="store_true", help="never escalate to the planner role")
+    limits.add_argument("--token-budget", type=int, default=400_000,
+                        help="tokens per task, 0 disables the limit (default: 400000)")
+    limits.add_argument("--cost-budget", type=float, default=0.0,
+                        help="USD per task, 0 disables the limit (default: 0)")
+
+    w = _add_command(sub, "watch", "live view of runs (read only)",
+                     "Live, read only view of run_plan runs and delegations. Keys: n next run, q quit.",
+                     "orchestra watch",
+                     "orchestra watch --repo ~/src/project")
+    w.add_argument("--repo", default=".", help="repository whose event log you watch (default: current directory)")
+    w.add_argument("--db", default=None, help="event database (default: <repo>/.orchestra/events.db)")
+
+    ro = _add_command(sub, "roles", "show or change who plans, reviews and implements",
+                      "Show which agent plays the planner, reviewer and implementer roles (with fallback),\n"
+                      "or change that choice and an agent's model.",
+                      "orchestra roles",
+                      "orchestra roles --set planner=opencode --set reviewer=claude",
+                      "orchestra roles --model opencode=opencode/big-pickle",
+                      "orchestra roles --set planner=    # clear the choice")
+    _add_config(ro)
+    _add_repo(ro)
+    ro.add_argument("--set", action="append", default=[], metavar="ROLE=AGENT",
+                    help="choose the agent of a role (an empty value clears the choice)")
     ro.add_argument("--model", action="append", default=[], metavar="AGENT=MODEL",
-                    help="model agenta, np. opencode=opencode/big-pickle (pusta wartość kasuje wybór)")
+                    help="set the model of an agent (an empty value clears it)")
 
-    lg = sub.add_parser("ledger", help="rejestr delegacji (opłacalność) i budżet sesji workerów")
-    lsub = lg.add_subparsers(dest="ledger_cmd", required=True)
-    for name, text in (("add", "zapisz recenzję delegacji"), ("show", "tabela delegacji i proponowany próg"),
-                       ("budget", "budżet sesji workerów w USD")):
-        p = lsub.add_parser(name, help=text)
-        _add_common(p)
-        p.add_argument("--repo", default=".")
-    la = lsub.choices["add"]
-    la.add_argument("run_id")
-    la.add_argument("task_id")
+    lg = _add_command(sub, "ledger", "delegation ledger and worker budget",
+                      "Track whether delegating pays off and cap the estimated cost of worker sessions.",
+                      "orchestra ledger budget --set 1.0",
+                      "orchestra ledger add RUN TASK --outcome accepted",
+                      "orchestra ledger show")
+    lsub = lg.add_subparsers(dest="ledger_cmd", required=True, title="actions", metavar="<action>",
+                             help="one of the actions below")
+    la = _add_command(lsub, "add", "record the review of a delegated task",
+                      "Record how a delegated task turned out, with estimated strong model tokens.",
+                      "orchestra ledger add 0ed4e12f core --outcome accepted",
+                      "orchestra ledger add 0ed4e12f tui --outcome fixed --spec-file spec.md")
+    ls = _add_command(lsub, "show", "delegation table and break-even threshold",
+                      "Show recorded delegations, the proposed break-even threshold and the budget.",
+                      "orchestra ledger show")
+    lb = _add_command(lsub, "budget", "show or set the worker session budget",
+                      "Show or start a session budget in USD (estimated from the prices in agents.toml).",
+                      "orchestra ledger budget",
+                      "orchestra ledger budget --set 1.0",
+                      "orchestra ledger budget --check")
+    for p in (la, ls, lb):
+        _add_config(p)
+        _add_repo(p)
+    la.add_argument("run_id", help="run ID printed by `orchestra run` or run_plan")
+    la.add_argument("task_id", help="task ID from the plan")
     la.add_argument("--outcome", required=True, choices=["accepted", "fixed", "rejected"],
-                    help="accepted: bez poprawek, fixed: z poprawkami, rejected: odrzucone i zrobione samemu")
-    la.add_argument("--spec-file", action="append", default=[], help="plik z opisem lub testem napisanym przez mocny model")
-    la.add_argument("--diff-branch", default="", help="gałąź z wynikiem workera (rozmiar diffu to koszt recenzji)")
-    la.add_argument("--notes-chars", type=int, default=0, help="liczba znaków uwag z recenzji")
-    la.add_argument("--note", default="")
-    lb = lsub.choices["budget"]
-    lb.add_argument("--set", type=float, default=None, metavar="USD", help="zacznij nową sesję z limitem w USD (0 wyłącza)")
-    lb.add_argument("--check", action="store_true", help="kod wyjścia 3, gdy budżet przekroczony")
-
-    ip = sub.add_parser("init-plan", help="zapisz szablon planu JSON do ręcznego podziału zadań (potem: orchestra run)")
-    ip.add_argument("out", nargs="?", default="plan.json")
-
-    pl = sub.add_parser("plan", help="rola planner układa plan zadań (DAG) w JSON")
-    _add_common(pl)
-    pl.add_argument("goal", help="cel do zaplanowania")
-    pl.add_argument("--repo", default=".", help="repozytorium (domyślnie bieżący katalog)")
-    pl.add_argument("--out", default="plan.json", help="gdzie zapisać plan")
-    pl.add_argument("--via", choices=["headless", "acp"], default="headless", help="jak rozmawiać z plannerem")
-    pl.add_argument("--model", default="", help="model planisty (domyślnie z konfiguracji agenta)")
-
-    r = sub.add_parser("run", help="wykonaj plan: worktree, bramka testów, eskalacja, scalenie do gałęzi integracyjnej")
-    _add_common(r)
-    r.add_argument("plan", help="plik planu JSON")
-    r.add_argument("--repo", default=".")
-    r.add_argument("--parallel", type=int, default=2, help="równoległość 1 do 3 (domyślnie 2)")
-    r.add_argument("--max-failures", type=int, default=2, help="kolejne porażki taniego workera przed eskalacją")
-    r.add_argument("--no-escalate", action="store_true", help="bez eskalacji do roli planner")
-    r.add_argument("--rounds", type=int, default=0, help="rundy recenzji po zielonych testach, 0 do 2 (domyślnie 0)")
-    r.add_argument("--token-budget", type=int, default=400_000, help="tokeny na zadanie, 0 wyłącza limit")
-    r.add_argument("--cost-budget", type=float, default=0.0, help="USD na zadanie, 0 wyłącza limit")
-    r.add_argument("--worker", default="", help="nadpisz agenta roli implementer")
-    r.add_argument("--model", default="", help="model taniego workera (inaczej zmienna z agents.toml)")
-    r.add_argument("--timeout", type=float, default=900, help="limit czasu pojedynczego workera w sekundach")
-    r.add_argument("--integration-test", default="", metavar="KOMENDA",
-                   help="pełne testy po każdym scaleniu (przy porażce merge jest cofany)")
-    r.add_argument("--no-red-check", action="store_true", help="nie wymagaj, żeby test_cmd failował przed zmianami workera")
-    r.add_argument("--report", default="", help="plik raportu JSON (domyślnie .orchestra/runs/<id>.json)")
+                    help="accepted: no changes, fixed: needed fixes, rejected: redone by hand")
+    la.add_argument("--spec-file", action="append", default=[],
+                    help="file with the description or test written by the strong model (repeatable)")
+    la.add_argument("--diff-branch", default="", help="branch with the worker's result (diff size = review cost)")
+    la.add_argument("--notes-chars", type=int, default=0, help="number of characters of review notes")
+    la.add_argument("--note", default="", help="free text stored with the entry")
+    lb.add_argument("--set", type=float, default=None, metavar="USD",
+                    help="start a new session with a USD limit (0 disables it)")
+    lb.add_argument("--check", action="store_true", help="exit with code 3 when the budget is exceeded")
     return ap
 
 
@@ -110,12 +200,12 @@ def cmd_plan(args: argparse.Namespace) -> int:
     try:
         plan = asyncio.run(go())
     except (PlanError, RuntimeError) as exc:
-        print(f"Błąd planowania: {exc}", file=sys.stderr)
+        print(f"Planning error: {exc}", file=sys.stderr)
         return 1
     Path(args.out).write_text(plan.model_dump_json(indent=2) + "\n", encoding="utf-8")
-    print(f"Plan: {len(plan.tasks)} zadań -> {Path(args.out).resolve()}")
+    print(f"Plan: {len(plan.tasks)} tasks -> {Path(args.out).resolve()}")
     for t in plan.tasks:
-        dep = f" (po: {', '.join(t.depends_on)})" if t.depends_on else ""
+        dep = f" (after: {', '.join(t.depends_on)})" if t.depends_on else ""
         print(f"  {t.id} [{t.difficulty}]{dep}: {t.description[:70]}")
     return 0
 
@@ -145,19 +235,19 @@ def cmd_run(args: argparse.Namespace) -> int:
     out = Path(args.report) if args.report else repo / ".orchestra" / "runs" / f"{report.run_id}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report.to_dict(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(f"\nRaport: {out}\nPrzejrzyj i scal: git log --oneline {report.integration_branch}")
+    print(f"\nReport: {out}\nReview and merge: git log --oneline {report.integration_branch}")
     return 0 if report.ok else 1
 
 
 PLAN_TEMPLATE = {
-    "goal": "Opis całego celu jednym zdaniem",
+    "goal": "The whole goal in one sentence",
     "tasks": [
-        {"id": "modul-a", "description": "Samowystarczalny opis: pliki, sygnatury, oczekiwane zachowanie.",
-         "files": ["src/modul_a.py", "tests/test_modul_a.py"], "acceptance": ["test_cmd przechodzi"],
-         "test_cmd": "pytest -q tests/test_modul_a.py", "cwd": "", "difficulty": "easy", "depends_on": []},
-        {"id": "modul-b", "description": "Zadanie zależne od modul-a (startuje po jego scaleniu).",
-         "files": ["src/modul_b.py", "tests/test_modul_b.py"], "acceptance": ["test_cmd przechodzi"],
-         "test_cmd": "pytest -q tests/test_modul_b.py", "cwd": "", "difficulty": "medium", "depends_on": ["modul-a"]},
+        {"id": "module-a", "description": "Self-contained description: files, signatures, expected behaviour.",
+         "files": ["src/module_a.py", "tests/test_module_a.py"], "acceptance": ["test_cmd passes"],
+         "test_cmd": "pytest -q tests/test_module_a.py", "cwd": "", "difficulty": "easy", "depends_on": []},
+        {"id": "module-b", "description": "Task that depends on module-a (starts after it is merged).",
+         "files": ["src/module_b.py", "tests/test_module_b.py"], "acceptance": ["test_cmd passes"],
+         "test_cmd": "pytest -q tests/test_module_b.py", "cwd": "", "difficulty": "medium", "depends_on": ["module-a"]},
     ],
 }
 
@@ -169,11 +259,11 @@ def cmd_init_plan(args: argparse.Namespace) -> int:
 
     out = Path(args.out)
     if out.exists():
-        print(f"{out} już istnieje, nic nie nadpisuję.", file=sys.stderr)
+        print(f"{out} already exists, nothing was overwritten.", file=sys.stderr)
         return 1
-    Plan.model_validate(PLAN_TEMPLATE)  # szablon ma być zawsze poprawny
+    Plan.model_validate(PLAN_TEMPLATE)  # the template must always be valid
     out.write_text(json.dumps(PLAN_TEMPLATE, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(f"Szablon planu: {out.resolve()}\nEdytuj i uruchom: orchestra run {out} --repo .  (albo przycisk Plan w TUI)")
+    print(f"Plan template: {out.resolve()}\nEdit it and run: orchestra run {out} --repo .  (or the Plan button in the TUI)")
     return 0
 
 
@@ -186,12 +276,12 @@ def cmd_roles(args: argparse.Namespace) -> int:
         roles = dict(item.split("=", 1) for item in args.set)
         models = dict(item.split("=", 1) for item in args.model)
     except ValueError:
-        print("Użycie: --set rola=agent, --model agent=model", file=sys.stderr)
+        print("Usage: --set role=agent, --model agent=model", file=sys.stderr)
         return 2
     bad = [r for r in roles if r not in ("planner", "reviewer", "implementer")] + \
           [a for a in [*roles.values(), *models] if a and a not in cfg.agents]
     if bad:
-        print(f"Nieznane: {', '.join(bad)}. Agenci: {', '.join(cfg.agents)}", file=sys.stderr)
+        print(f"Unknown: {', '.join(bad)}. Agents: {', '.join(cfg.agents)}", file=sys.stderr)
         return 2
     if roles or models:
         ensure_local_exclude(repo)
@@ -199,12 +289,12 @@ def cmd_roles(args: argparse.Namespace) -> int:
         cfg.reload_overrides(repo)
     for role in ("planner", "reviewer", "implementer"):
         info = cfg.role_info(role)
-        note = f"  ({info.reason}; w agents.toml: {info.configured})" if info.changed else ""
+        note = f"  ({info.reason}; in agents.toml: {info.configured})" if info.changed else ""
         print(f"{role:12} {info.effective}{note}")
-    print("\nAgenci:")
+    print("\nAgents:")
     for name, agent in cfg.agents.items():
         model = agent.resolve_model() or "-"
-        print(f"  {name:12} {'zainstalowany' if agent.is_available() else 'brak w PATH':14} {agent.tier:7} model: {model}")
+        print(f"  {name:12} {'installed' if agent.is_available() else 'not in PATH':14} {agent.tier:7} model: {model}")
     return 0
 
 
@@ -223,7 +313,7 @@ def cmd_ledger(args: argparse.Namespace) -> int:
 
         worker, tin, tout, usd = ledger.task_worker_usage(store, cfg, args.run_id, args.task_id)
         if not worker:
-            print(f"Brak prób zadania {args.task_id} w przebiegu {args.run_id}.", file=sys.stderr)
+            print(f"No attempts of task {args.task_id} in run {args.run_id}.", file=sys.stderr)
             return 1
         spec = sum(ledger.estimate_tokens(Path(f).read_text(encoding="utf-8")) for f in args.spec_file)
         diff_tokens = 0
@@ -234,8 +324,8 @@ def cmd_ledger(args: argparse.Namespace) -> int:
         store.add_delegation(run_id=args.run_id, task_id=args.task_id, outcome=args.outcome, worker=worker,
                              worker_tokens_in=tin, worker_tokens_out=tout, worker_usd=usd, spec_tokens=spec,
                              review_tokens=review, diff_tokens=diff_tokens, note=args.note)
-        print(f"Zapisano {args.task_id}: worker {tin}/{tout} tok (~{usd:.4f} USD), opis ~{spec}, recenzja ~{review}, "
-              f"diff ~{diff_tokens} (tokeny mocnego modelu to szacunek: znaki / {ledger.CHARS_PER_TOKEN})")
+        print(f"Recorded {args.task_id}: worker {tin}/{tout} tok (~{usd:.4f} USD), spec ~{spec}, review ~{review}, "
+              f"diff ~{diff_tokens} (strong model tokens are an estimate: characters / {ledger.CHARS_PER_TOKEN})")
         return 0
     if args.ledger_cmd == "show":
         rows = ledger.rows_from_store(store)
@@ -246,12 +336,12 @@ def cmd_ledger(args: argparse.Namespace) -> int:
             ledger.start_session(repo, args.set)
         state = ledger.budget_state(repo, store, cfg)
         if state is None:
-            print("Budżet sesji: nieustawiony (orchestra ledger budget --set USD).")
+            print("Session budget: not set (orchestra ledger budget --set USD).")
             return 0
-        flag = "  PRZEKROCZONY" if state.exceeded else ""
-        print(f"Budżet sesji: {state.spent_usd:.4f} z {state.limit_usd:.2f} USD (szacunek z cen w agents.toml){flag}")
+        flag = "  EXCEEDED" if state.exceeded else ""
+        print(f"Session budget: {state.spent_usd:.4f} of {state.limit_usd:.2f} USD (estimate from prices in agents.toml){flag}")
         if state.unpriced_agents:
-            print(f"Uwaga: brak ceny w agents.toml dla: {', '.join(state.unpriced_agents)} (liczone jako 0).")
+            print(f"Warning: no price in agents.toml for: {', '.join(state.unpriced_agents)} (counted as 0).")
         if args.ledger_cmd == "budget" and args.check and state.exceeded:
             return 3
     return 0
@@ -272,7 +362,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                                  others=not args.no_others))
     print(rep.render())
     rep.save(args.json)
-    print(f"\nRaport JSON: {Path(args.json).resolve()} (bez sekretów, można go wkleić do rozmowy)")
+    print(f"\nJSON report: {Path(args.json).resolve()} (no secrets, safe to paste into a chat)")
     return 0 if rep.ok else 1
 
 
@@ -280,7 +370,11 @@ def main(argv: list[str] | None = None) -> int:
     from .node_env import ensure_node
 
     ensure_node()
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.command is None:
+        parser.print_help()
+        return 0
     handlers = {"doctor": cmd_doctor, "plan": cmd_plan, "run": cmd_run, "watch": cmd_watch,
                 "roles": cmd_roles, "init-plan": cmd_init_plan, "ledger": cmd_ledger}
     handler = handlers.get(args.command)

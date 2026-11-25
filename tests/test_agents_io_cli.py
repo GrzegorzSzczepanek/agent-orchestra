@@ -133,7 +133,7 @@ def test_cli_plan_then_run_end_to_end(git_repo: Path, tmp_path: Path, capsys, mo
     cfg = write_cfg(tmp_path)
     plan_path = tmp_path / "plan.json"
     assert main(["plan", "do a and b", "--config", str(cfg), "--repo", str(git_repo), "--out", str(plan_path)]) == 0
-    assert "2 zadań" in capsys.readouterr().out  # cli.py still prints Polish; translated by a later task
+    assert "2 tasks" in capsys.readouterr().out
     plan = json.loads(plan_path.read_text())
     assert [t["id"] for t in plan["tasks"]] == ["a", "b"]
 
@@ -156,7 +156,7 @@ def test_cli_plan_fails_cleanly_on_bad_plan(git_repo: Path, tmp_path: Path, caps
     (tmp_path / "planner.py").write_text(
         'import json\nprint(json.dumps({"type":"result","subtype":"success","usage":{},"durationMs":1,"finalText":"not json"}))\n')
     rc = main(["plan", "goal", "--config", str(cfg), "--repo", str(git_repo), "--out", str(tmp_path / "p.json")])
-    assert rc == 1 and "Błąd planowania" in capsys.readouterr().err  # cli.py still prints Polish; translated by a later task
+    assert rc == 1 and "Planning error" in capsys.readouterr().err
 
 
 async def test_role_attempt_logs_cache_tokens_from_real_claude_fixture(git_repo: Path, tmp_path: Path):
