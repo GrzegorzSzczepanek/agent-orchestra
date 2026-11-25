@@ -55,8 +55,8 @@ def test_full_view_is_unchanged():
 
 
 async def test_f9_toggles_full_log(git_repo: Path):
+    store = EventStore(":memory:")
     store.add_event("task:a", "worker_step", {"step": "think", "text": "SECRET-REASONING", "task_id": "a"})
-    store.add_event("task:a", "worker_step", {"step": "think", "text": "TAJNE-ROZUMOWANIE", "task_id": "a"})
     app = OrchestraApp(store, Controller(store, []), poll_s=0.05)
     async with app.run_test(size=(100, 36)) as pilot:
         await pilot.pause(0.3)
@@ -64,9 +64,9 @@ async def test_f9_toggles_full_log(git_repo: Path):
 
         def shown() -> str:
             return "\n".join(line.text for line in app.query_one("#log", RichLog).lines)
-assert "SECRET-REASONING" not in shown()
+
         await pilot.pause(0.2)
-        assert "TAJNE-ROZUMOWANIE" not in shown()
+        assert "SECRET-REASONING" not in shown()
+        await pilot.press("f9")
+        await pilot.pause(0.2)
         assert "SECRET-REASONING" in shown()
-        await pilot.pause(0.2)
-        assert "TAJNE-ROZUMOWANIE" in shown()
