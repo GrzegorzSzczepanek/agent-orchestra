@@ -1,4 +1,4 @@
-"""Pomocnicze operacje na git worktree (przez git CLI)."""
+"""Helper operations on git worktrees (via the git CLI)."""
 
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ class GitError(RuntimeError):
     pass
 
 
-# Zmienne bez sekretów, które dostają workery i komendy testowe. Resztę trzeba wymienić w env_passthrough.
-# Proxy może zawierać hasło w URL, ale bez niego worker za proxy nie połączy się z modelem.
+# Variables without secrets that workers and test commands receive. The rest must be listed in env_passthrough.
+# A proxy may contain a password in the URL, but without it the worker cannot connect to the model through the proxy.
 SAFE_ENV = frozenset((
     "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "COLORTERM", "LANG", "LANGUAGE", "TZ", "TMPDIR",
     "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR",
@@ -27,7 +27,7 @@ SAFE_ENV = frozenset((
 
 
 def safe_env(passthrough: Iterable[str] = ()) -> dict[str, str]:
-    """Okrojone środowisko procesu potomnego: SAFE_ENV, LC_* i jawnie wymienione zmienne."""
+    """Trimmed environment of the child process: SAFE_ENV, LC_* and explicitly listed variables."""
     allowed = SAFE_ENV.union(passthrough)
     return {k: v for k, v in os.environ.items() if k in allowed or k.startswith("LC_")}
 
@@ -35,13 +35,13 @@ def safe_env(passthrough: Iterable[str] = ()) -> dict[str, str]:
 async def run(argv: list[str], cwd: str | Path, timeout: float | None = 60,
               on_line: Callable[[str], None] | None = None,
               env: Mapping[str, str] | None = None) -> tuple[int, str, str]:
-    """Uruchamia proces. on_line dostaje kolejne linie stdout na żywo (np. NDJSON workera).
+    """Run a process. on_line receives successive stdout lines live (for example worker NDJSON).
 
-    env=None dziedziczy całe środowisko (git); dla workerów i testów podawaj safe_env().
+    env=None inherits the whole environment (git); for workers and tests pass safe_env().
     """
     proc = await asyncio.create_subprocess_exec(
         *argv, cwd=str(cwd), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        limit=16 * 1024 * 1024,  # ramki NDJSON bywają długie
+        limit=16 * 1024 * 1024,  # NDJSON frames can be long
         env=None if env is None else dict(env),
     )
 
@@ -54,7 +54,7 @@ async def run(argv: list[str], cwd: str | Path, timeout: float | None = 60,
             if on_line is not None:
                 try:
                     on_line(line.rstrip("\n"))
-                except Exception:  # noqa: BLE001 - błąd podglądu nie może zabić workera
+                except Exception:  # noqa: BLE001 - a preview error must not kill the worker
                     pass
         return "".join(chunks)
 
@@ -73,7 +73,7 @@ async def run(argv: list[str], cwd: str | Path, timeout: float | None = 60,
         proc.kill()
         await proc.wait()
         raise
-    except asyncio.CancelledError:  # anulowanie przebiegu zabija też proces workera
+    except asyncio.CancelledError:  # cancelling a run also kills the worker process
         proc.kill()
         raise
     return proc.returncode or 0, out, err
@@ -82,7 +82,7 @@ async def run(argv: list[str], cwd: str | Path, timeout: float | None = 60,
 async def git(args: list[str], cwd: str | Path, timeout: float | None = 60) -> str:
     code, out, err = await run(["git", *args], cwd, timeout)
     if code != 0:
-        raise GitError(f"git {' '.join(args)} zakończył się kodem {code}: {err.strip()}")
+        raise GitError(f"git {' '.join(args)} exited with code {code}: {err.strip()}")
     return out
 
 
@@ -98,7 +98,7 @@ def _slug(text: str) -> str:
 
 
 def ensure_local_exclude(repo: str | Path, pattern: str = ".orchestra/") -> None:
-    """Dopisuje .orchestra/ do .git/info/exclude (lokalnie, bez zmian w repo użytkownika), chyba że już jest ignorowane."""
+    """Append .orchestra/ to .git/info/exclude (locally, without changing the user's repo) unless it is already ignored."""
     import subprocess
 
     try:
@@ -114,12 +114,12 @@ def ensure_local_exclude(repo: str | Path, pattern: str = ".orchestra/") -> None
             return
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(existing + ("" if not existing or existing.endswith("\n") else "\n") + pattern + "\n", encoding="utf-8")
-    except Exception:  # noqa: BLE001 - ignorowanie to wygoda, nie warunek działania
+    except Exception:  # noqa: BLE001 - ignoring is a convenience, not a condition for working
         pass
 
 
 async def create_worktree(repo: str | Path, name: str = "task", base: str = "HEAD") -> Worktree:
-    """Tworzy worktree na nowej gałęzi orchestra/<slug>-<id> w <repo>/.orchestra/worktrees."""
+    """Create a worktree on a new branch orchestra/<slug>-<id> in <repo>/.orchestra/worktrees."""
     repo = Path(repo).resolve()
     ensure_local_exclude(repo)
     base_sha = (await git(["rev-parse", base], repo)).strip()
@@ -132,7 +132,7 @@ async def create_worktree(repo: str | Path, name: str = "task", base: str = "HEA
 
 
 async def diff(wt: Worktree) -> str:
-    """Pełny diff względem bazy, razem z nowymi plikami (stage -A w worktree)."""
+    """Full diff against the base, including new files (stage -A in the worktree)."""
     await git(["add", "-A"], wt.path)
     return await git(["diff", "--cached", "--no-color", wt.base], wt.path)
 
@@ -143,6 +143,6 @@ async def remove_worktree(repo: str | Path, wt: Worktree) -> None:
 
 
 async def view_diff(path: str | Path) -> str:
-    """Diff niezatwierdzonych zmian w worktree względem HEAD (nowe pliki przez intent-to-add)."""
+    """Diff of uncommitted changes in the worktree against HEAD (new files via intent-to-add)."""
     await git(["add", "-N", "."], path)
     return await git(["diff", "--no-color", "HEAD"], path)

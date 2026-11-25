@@ -1,4 +1,4 @@
-"""Wybór Node >= 22 dla agentów npm (cmd, claude-agent-acp), niezależnie od domyślnego Node w shellu."""
+"""Select Node >= 22 for npm agents (cmd, claude-agent-acp), regardless of the default Node in the shell."""
 
 from __future__ import annotations
 
@@ -28,22 +28,22 @@ def current_node_major(path: str | None = None) -> int:
 
 
 def find_nvm_node(root: Path | None = None, minimum: int = MIN_MAJOR) -> Path | None:
-    """Katalog bin najnowszej wersji Node >= minimum zainstalowanej przez nvm (z `cmd` w środku, jeśli się da)."""
+    """bin directory of the newest Node version >= minimum installed by nvm (with `cmd` inside, if possible)."""
     base = (root or Path(os.environ.get("NVM_DIR", Path.home() / ".nvm"))) / "versions" / "node"
     if not base.is_dir():
         return None
     versions = sorted((d for d in base.iterdir() if _major(d.name) >= minimum and (d / "bin" / "node").exists()),
                       key=lambda d: [int(x) for x in re.findall(r"\d+", d.name)], reverse=True)
-    for d in versions:  # preferuj instalację, w której jest cmd
+    for d in versions:  # prefer an installation that has cmd
         if (d / "bin" / "cmd").exists():
             return d / "bin"
     return versions[0] / "bin" if versions else None
 
 
 def ensure_node() -> str:
-    """Gdy domyślny Node jest za stary albo `cmd` nie jest w PATH, dopisuje na początek PATH bin z nvm (Node >= 22).
+    """When the default Node is too old or `cmd` is not on PATH, prepend the nvm bin (Node >= 22) to PATH.
 
-    Zwraca dopisany katalog albo "".
+    Return the prepended directory or "".
     """
     if current_node_major() >= MIN_MAJOR and shutil.which("cmd"):
         return ""

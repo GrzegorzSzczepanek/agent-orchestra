@@ -1,4 +1,4 @@
-"""Widok przebiegów (run_plan) zbudowany z logu zdarzeń: wspólny dla narzędzia MCP run_status i `orchestra watch`."""
+"""Run view (run_plan) built from the event log: shared by the MCP run_status tool and `orchestra watch`."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ class TaskView:
     status: str = "pending"  # pending | running | done | failed | blocked | skipped | over_budget
     attempts: int = 0
     worker: str = ""
-    last_attempt: str = ""  # status ostatniej próby workera (ok, tests_failed, ...)
+    last_attempt: str = ""  # status of the worker's last attempt (ok, tests_failed, ...)
     escalated: bool = False
     tokens_in: int = 0
     tokens_out: int = 0

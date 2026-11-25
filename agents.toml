@@ -1,15 +1,15 @@
-# Konfiguracja agentów. Komendy do weryfikacji na swojej maszynie (patrz README).
-# acp: komenda uruchamiająca serwer ACP po stdio (jeden proces, jeden katalog projektu)
-# env_passthrough: zmienne środowiskowe przekazywane agentowi (ACP i headless dostają okrojone środowisko)
-# headless: szablon komendy trybu nieinteraktywnego, {task} i {model} są podstawiane
+# Agent configuration. Verify the commands on your machine (see README).
+# acp: command that starts the ACP server over stdio (one process, one project directory)
+# env_passthrough: environment variables passed to the agent (both ACP and headless get a trimmed environment)
+# headless: template of the non-interactive mode command, {task} and {model} are substituted
 
-# Gdy agent roli nie jest zainstalowany, rola przechodzi na pierwszego dostępnego z tej listy
-# (potem na dowolnego innego z pliku). Wybór można zmienić w TUI (przycisk Role) albo `orchestra roles`.
-# Własne agenty i modele dopisz w ~/.config/orchestra/agents.toml albo <repo>/.orchestra/agents.toml.
+# When the role's agent is not installed, the role falls back to the first available one from this list
+# (then to any other from the file). You can change the choice in the TUI (Role button) or with `orchestra roles`.
+# Add custom agents and models in ~/.config/orchestra/agents.toml or <repo>/.orchestra/agents.toml.
 fallback_order = ["claude", "commandcode", "opencode", "codex", "antigravity"]
 
-# Workery i test_cmd dostają okrojone środowisko (PATH, HOME, locale, proxy). Dodatkowe zmienne dla testów wpisz tu,
-# a dla agentów w ich env_passthrough.
+# Workers and test_cmd get a trimmed environment (PATH, HOME, locale, proxy). Add extra variables for tests here,
+# and for agents in their env_passthrough.
 test_env_passthrough = []
 
 [roles]
@@ -19,48 +19,48 @@ implementer = "commandcode"
 researcher = "antigravity"
 
 [agents.claude]
-description = "Claude Code przez oficjalny adapter ACP (niezmodyfikowany binarny claude na własnym koncie)"
+description = "Claude Code via the official ACP adapter (unmodified claude binary on your own account)"
 acp = ["claude-agent-acp"]
-# env_passthrough celowo puste: logowanie subskrypcją. Wpisz ["ANTHROPIC_API_KEY"] tylko gdy chcesz rozliczanie przez API
+# env_passthrough deliberately empty: subscription login. Add ["ANTHROPIC_API_KEY"] only when you want API billing
 headless = ["claude", "-p", "{task}", "--output-format", "json"]
 tier = "strong"
 
 [agents.codex]
-description = "Codex CLI przez adapter ACP"
+description = "Codex CLI via the ACP adapter"
 acp = ["codex-acp"]
-# env_passthrough celowo puste (logowanie kontem); dla klucza API wpisz ["OPENAI_API_KEY"]
+# env_passthrough deliberately empty (account login); for an API key add ["OPENAI_API_KEY"]
 headless = ["codex", "exec", "{task}"]
 tier = "strong"
 
 [agents.antigravity]
-description = "Antigravity CLI (agy), natywny ACP od wersji 1.5.0"
+description = "Antigravity CLI (agy), native ACP since version 1.5.0"
 acp = ["agy", "acp"]
-# env_passthrough puste: logowanie kontem Google; dla klucza API dopisz zmienne wg dokumentacji agy
+# env_passthrough empty: Google account login; for an API key add variables per the agy documentation
 headless = ["agy", "-p", "{task}"]
 tier = "strong"
 
 [agents.opencode]
-description = "OpenCode, natywny ACP"
+description = "OpenCode, native ACP"
 acp = ["opencode", "acp"]
-# --dangerously-skip-permissions: bez tego `opencode run` odrzuca edycje plików. Izolacją jest worktree.
-# {model} to ID w formacie provider/model (np. opencode/big-pickle); puste, to model z konfiguracji opencode.
+# --dangerously-skip-permissions: without it `opencode run` rejects file edits. Isolation is provided by the worktree.
+# {model} is an ID in provider/model form (for example opencode/big-pickle); empty means the model from the opencode config.
 headless = ["opencode", "run", "{task}", "--model", "{model}", "--dangerously-skip-permissions"]
 model_env = "ORCHESTRA_OPENCODE_MODEL"
 tier = "cheap"
 
 [agents.commandcode]
-description = "Command Code (commandcode.ai), plan Go działa tylko przez CLI"
+description = "Command Code (commandcode.ai), the Go plan works only through the CLI"
 acp = ["cmd", "acp"]
 env_passthrough = ["COMMAND_CODE_API_KEY", "CMD_ZDR", "CMD_LOCAL_ONLY"]
-# --no-skills i --safe-mode odcinają katalog skilli i mody. Wpływ na tokeny jest w granicach szumu (patrz README).
+# --no-skills and --safe-mode cut off the skills directory and modes. The effect on tokens is within noise (see README).
 headless = ["cmd", "-p", "{task}", "--model", "{model}", "--output-format", "json", "--max-turns", "30", "--yolo", "--skip-onboarding", "--no-skills", "--safe-mode"]
-# Model: ID z `cmd --list-models` (pełne albo część po ostatnim "/"). Brak modelu to jasny błąd.
-# Zmienna ORCHESTRA_CMD_MODEL ma pierwszeństwo przed default_model.
+# Model: an ID from `cmd --list-models` (full or the part after the last "/"). A missing model is a clear error.
+# The ORCHESTRA_CMD_MODEL variable takes precedence over default_model.
 model_env = "ORCHESTRA_CMD_MODEL"
 default_model = "deepseek/deepseek-v4.1-flash"
-# Ceny w USD za 1M tokenów do szacowania kosztu (cmd go nie raportuje). Źródło: https://commandcode.ai/models/deepseek-v4-1-flash
-# (stan na 2026-11-25). Wpisano pasmo peak ($0.30 in, $1.20 out) i pominięto rabat za cache ($0.006 vs $0.30 za 1M),
-# więc szacunek jest górną granicą. Off-peak: 0.15 in, 0.60 out. Zmień przy innym modelu.
+# Prices in USD per 1M tokens to estimate cost (cmd does not report it). Source: https://commandcode.ai/models/deepseek-v4-1-flash
+# (as of 2026-11-25). The peak band is entered ($0.30 in, $1.20 out) and the cache discount is omitted ($0.006 vs $0.30 per 1M),
+# so the estimate is an upper bound. Off-peak: 0.15 in, 0.60 out. Change it for a different model.
 price_in_per_mtok = 0.30
 price_out_per_mtok = 1.20
 require_model = true

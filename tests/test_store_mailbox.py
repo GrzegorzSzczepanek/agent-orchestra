@@ -38,61 +38,61 @@ def test_messages_limit_truncates(store: EventStore):
 
 
 def test_inbox_filters_by_recipient_since_id_and_thread(store: EventStore):
-    m1 = store.post_message("planner", "impl", "pierwsza", thread="t1")
-    store.post_message("planner", "impl", "druga", thread="t2")
-    store.post_message("planner", "other", "nie dla impl", thread="t1")
-    store.post_message("impl", "planner", "odpowiedź", thread="t1")
+    m1 = store.post_message("planner", "impl", "first", thread="t1")
+    store.post_message("planner", "impl", "second", thread="t2")
+    store.post_message("planner", "other", "not for impl", thread="t1")
+    store.post_message("impl", "planner", "reply", thread="t1")
 
-    assert [m.body for m in store.inbox("impl")] == ["pierwsza", "druga"]
-    assert [m.body for m in store.inbox("impl", since_id=m1)] == ["druga"]
-    assert [m.body for m in store.inbox("impl", thread="t1")] == ["pierwsza"]
-    assert [m.body for m in store.inbox("impl", thread="t2")] == ["druga"]
+    assert [m.body for m in store.inbox("impl")] == ["first", "second"]
+    assert [m.body for m in store.inbox("impl", since_id=m1)] == ["second"]
+    assert [m.body for m in store.inbox("impl", thread="t1")] == ["first"]
+    assert [m.body for m in store.inbox("impl", thread="t2")] == ["second"]
     assert [m.body for m in store.inbox("impl", thread="t1", since_id=m1)] == []
     assert store.inbox("nobody") == []
 
 
 def test_default_thread_is_empty(store: EventStore):
-    mid = store.post_message("a", "b", "bez wątku")
+    mid = store.post_message("a", "b", "no thread")
     assert store.messages()[0].thread == ""
     assert store.inbox("b", thread="")[0].id == mid
     assert store.inbox("b")[0].thread == ""
 
 
 def test_message_event_on_inbox_agent_has_payload(store: EventStore):
-    store.post_message("planner", "impl", "zrób X", thread="t1")
+    store.post_message("planner", "impl", "do X", thread="t1")
     events = store.events(agent="inbox")
     assert len(events) == 1
     ev = events[0]
     assert ev.kind == "message"
     assert ev.agent == "inbox"
-    assert ev.payload == {"from": "planner", "to": "impl", "thread": "t1", "body": "zrób X"}
+    assert ev.payload == {"from": "planner", "to": "impl", "thread": "t1", "body": "do X"}
     assert [e.kind for e in store.events(kind="message")] == ["message"]
 
 
 def test_run_and_task_recipients_do_not_create_inbox_event(store: EventStore):
-    run_id = store.post_message("planner", "run:abc", "sterowanie")
-    task_id = store.post_message("planner", "task:x", "zadanie")
+    run_id = store.post_message("planner", "run:abc", "control")
+    task_id = store.post_message("planner", "task:x", "task")
     assert store.events(agent="inbox") == []
     assert store.events(kind="message") == []
 
     all_ids = [m.id for m in store.messages()]
     assert all_ids == [run_id, task_id]
-    assert [m.body for m in store.inbox("run:abc")] == ["sterowanie"]
-    assert [m.body for m in store.inbox("task:x")] == ["zadanie"]
+    assert [m.body for m in store.inbox("run:abc")] == ["control"]
+    assert [m.body for m in store.inbox("task:x")] == ["task"]
 
 
 def test_message_persists_after_reopen(tmp_path: Path):
     path = tmp_path / "e.db"
     first = EventStore(path)
-    mid = first.post_message("a", "b", "trwała", thread="t1")
+    mid = first.post_message("a", "b", "persistent", thread="t1")
     first.close()
 
     reopened = EventStore(path)
     try:
         msgs = reopened.messages()
         assert [m.id for m in msgs] == [mid]
-        assert msgs[0].body == "trwała"
+        assert msgs[0].body == "persistent"
         assert msgs[0].thread == "t1"
-        assert [m.body for m in reopened.inbox("b", thread="t1")] == ["trwała"]
+        assert [m.body for m in reopened.inbox("b", thread="t1")] == ["persistent"]
     finally:
         reopened.close()

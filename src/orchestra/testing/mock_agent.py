@@ -1,11 +1,11 @@
-"""Minimalny agent ACP do testów i demo TUI (bez prawdziwych modeli).
+"""Minimal ACP agent for tests and the TUI demo (without real models).
 
-Uruchomienie: python -m orchestra.testing.mock_agent
-Zachowanie zależy od treści promptu:
-- "write:<plik>:<treść>" zapisuje plik w cwd sesji (po zatwierdzeniu uprawnienia),
-- "slow" czeka 30 s (test anulowania),
-- każdy inny tekst jest powtarzany jako odpowiedź.
-Po new_session zapisuje cwd i mcp_servers do .mock_session.json w cwd.
+Run: python -m orchestra.testing.mock_agent
+Behaviour depends on the prompt text:
+- "write:<path>:<content>" writes a file in the session cwd (after the permission is approved),
+- "slow" waits 30 s (cancel test),
+- any other text is echoed back as the response.
+After new_session it writes cwd and mcp_servers to .mock_session.json in the cwd.
 """
 
 from __future__ import annotations
@@ -64,24 +64,24 @@ class MockAgent(Agent):
                 pass
             return PromptResponse(stop_reason="cancelled")
         await self.conn.session_update(
-            session_id=session_id, update=AgentThoughtChunk(content=TextContentBlock(text="myślę")))
+            session_id=session_id, update=AgentThoughtChunk(content=TextContentBlock(text="thinking")))
         if text.startswith("write:"):
             _, name, content = text.split(":", 2)
-            tc = ToolCallUpdate(tool_call_id="t1", title=f"Zapis {name}", kind="edit")
+            tc = ToolCallUpdate(tool_call_id="t1", title=f"Write {name}", kind="edit")
             resp = await self.conn.request_permission(
                 session_id=session_id, tool_call=tc,
-                options=[PermissionOption(option_id="allow", name="Zezwól", kind="allow_once"),
-                         PermissionOption(option_id="reject", name="Odrzuć", kind="reject_once")])
+                options=[PermissionOption(option_id="allow", name="Allow", kind="allow_once"),
+                         PermissionOption(option_id="reject", name="Deny", kind="reject_once")])
             outcome = resp.outcome
             if getattr(outcome, "outcome", "") == "selected" and outcome.option_id == "allow":
                 await self.conn.session_update(
-                    session_id=session_id, update=ToolCallStart(tool_call_id="t1", title=f"Zapis {name}", kind="edit"))
+                    session_id=session_id, update=ToolCallStart(tool_call_id="t1", title=f"Write {name}", kind="edit"))
                 Path(self.cwd[session_id], name).write_text(content)
                 await self.conn.session_update(
                     session_id=session_id, update=ToolCallProgress(tool_call_id="t1", status="completed"))
-                await self._say(session_id, f"zapisano {name}")
+                await self._say(session_id, f"saved {name}")
             else:
-                await self._say(session_id, f"odmowa zapisu {name}")
+                await self._say(session_id, f"write refused {name}")
         else:
             await self._say(session_id, f"echo: {text}")
         return PromptResponse(stop_reason="end_turn",

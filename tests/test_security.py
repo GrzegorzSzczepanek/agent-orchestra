@@ -1,4 +1,4 @@
-"""Środowisko procesów potomnych, maskowanie logu zdarzeń i prawa pliku bazy."""
+"""Child process environment, event log masking and database file permissions."""
 
 import json
 import os
@@ -18,7 +18,7 @@ DUMP = "import os,sys; open(sys.argv[1],'w').write('\\n'.join(sorted(os.environ)
 
 
 def test_safe_env_drops_secrets_and_keeps_basics(monkeypatch):
-    monkeypatch.setenv("OTHER_SECRET", "cos-innego-123456")
+    monkeypatch.setenv("OTHER_SECRET", "something-else-123456")
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "abc")
     monkeypatch.setenv("LC_ALL", "C")
     monkeypatch.setenv("ALLOWED_ONE", "1")
@@ -53,7 +53,7 @@ def test_load_config_reads_test_env_passthrough(tmp_path: Path, monkeypatch):
 def test_event_payload_is_masked(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MY_API_KEY", "supersecretvalue123")
     store = EventStore(tmp_path / "e.db")
-    store.add_event("a", "worker_step", {"run_id": "r1", "n": 3, "text": "klucz supersecretvalue123",
+    store.add_event("a", "worker_step", {"run_id": "r1", "n": 3, "text": "key supersecretvalue123",
                                          "nested": [{"out": "ghp_ABCDEFGHIJKLMNOPQRSTUV"}]})
     payload = store.events()[0].payload
     assert "supersecretvalue123" not in json.dumps(payload) and "ghp_ABC" not in json.dumps(payload)
