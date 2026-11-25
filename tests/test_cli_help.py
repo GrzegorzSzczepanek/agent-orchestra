@@ -8,7 +8,7 @@ import pytest
 from orchestra.cli import build_parser, main
 
 COMMANDS = ["doctor", "plan", "init-plan", "run", "watch", "roles", "ledger"]
-POLISH = re.compile("[ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]")
+POLISH = re.compile("[ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]")  # i18n-ok
 
 
 def help_of(capsys, *argv: str) -> str:

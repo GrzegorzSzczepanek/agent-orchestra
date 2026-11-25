@@ -69,7 +69,7 @@ Claude jest domyślny, ale nie wymagany. Wszystko ma fallback i wszystko da się
 
 **Klient sterujący.** `orch` wybiera pierwszego znalezionego klienta (`claude`, `opencode`, `codex`) albo tego, którego podasz w `--client`. Do każdego podpina ten sam serwer MCP `orchestra` i tę samą instrukcję rozbijania zadań, różni się tylko sposób podłączenia. Gdy nie ma żadnego, `orch` nie kończy się błędem: otwiera samo TUI, a przycisk **▶ Plan** (F7) przyjmuje cel, który rola planner rozbija na zadania, albo plik planu napisany przez Ciebie (szablon zapisze `orchestra init-plan`).
 
-**Role z fallbackiem.** `planner`, `reviewer` i `implementer` wskazują agentów z `agents.toml`. Jeśli wskazany agent nie jest zainstalowany, rola przechodzi na pierwszego dostępnego (planner i reviewer wolą poziom `strong`, worker `cheap`, potem kolejność z `fallback_order`). Pasek pod przyciskami pokazuje, kto co robi, a `*` oznacza zmianę względem `agents.toml`. **⚙ Role** (F8) pozwala wybrać dowolnego agenta dla każdej roli i ustawić jego model, to samo robi `orchestra roles` w terminalu. Wybór zapisuje się w `.orchestra/roles.json` i obowiązuje od następnego przebiegu, także tych uruchomionych z Claude Code, OpenCode albo Codex. Słabszy planner gorzej dzieli zadania, taka jest cena braku mocnego modelu.
+**Role z fallbackiem.** `planner`, `reviewer` i `implementer` wskazują agentów z `agents.toml`. Jeśli wskazany agent nie jest zainstalowany, rola przechodzi na pierwszego dostępnego (planner i reviewer wolą poziom `strong`, worker `cheap`, potem kolejność z `fallback_order`). Pasek pod przyciskami pokazuje, kto co robi, a `*` oznacza zmianę względem `agents.toml`. **⚙ Roles** (F8) pozwala wybrać dowolnego agenta dla każdej roli i ustawić jego model, to samo robi `orchestra roles` w terminalu. Wybór zapisuje się w `.orchestra/roles.json` i obowiązuje od następnego przebiegu, także tych uruchomionych z Claude Code, OpenCode albo Codex. Słabszy planner gorzej dzieli zadania, taka jest cena braku mocnego modelu.
 
 ![Pasek ról z fallbackiem i okno Role](docs/tui-roles.png)
 
@@ -106,11 +106,11 @@ Wszystko jest widoczne od razu, a każda akcja ma przycisk i F-klawisz (skróty 
 | --- | --- | --- |
 | ＋ Agent | Ctrl+N | nowa sesja agenta dowolnego typu z `agents.toml`, we własnym worktree |
 | ▶ Plan | F7 | cel dla roli planner albo własny plik planu, działa bez żadnego klienta |
-| ⚙ Role | F8 | który agent i model pełni rolę planner, reviewer, implementer |
-| ✉ Wiadom. | F3 | wiadomość do działającego agenta, dociera jako jego kolejny prompt |
-| ✎ Wskazówka | F4 | tekst dołączany do następnej próby workera wybranego zadania |
+| ⚙ Roles | F8 | który agent i model pełni rolę planner, reviewer, implementer |
+| ✉ Msg | F3 | wiadomość do działającego agenta, dociera jako jego kolejny prompt |
+| ✎ Hint | F4 | tekst dołączany do następnej próby workera wybranego zadania |
 | 🔎 Info | F5 | błąd, `test_cmd`, pełny wynik testów i pliki ostatniej próby |
-| ⛔ Anuluj | F6 | zabija pracujące workery i kończy przebieg (z potwierdzeniem) |
+| ⛔ Cancel | F6 | zabija pracujące workery i kończy przebieg (z potwierdzeniem) |
 | ± Diff | F2 | diff worktree zaznaczonego agenta |
 
 Zaznacz wiersz po lewej, a pole tekstowe zmienia znaczenie: dla agenta to prompt, dla zadania to wskazówka (podpowiedź pod logiem mówi, co się stanie).
@@ -119,7 +119,7 @@ Gdy próba workera nie przechodzi testów, widać przyczynę, a nie tylko status
 
 ![Nieudana próba z wynikiem testów](docs/tui-failure.png)
 
-Rozmowy agentów i uwagi recenzenta są w wierszu `✉ wiadomości`. Nowego agenta dodajesz z listy, bez wpisywania komend:
+Rozmowy agentów i uwagi recenzenta są w wierszu `✉ messages`. Nowego agenta dodajesz z listy, bez wpisywania komend:
 
 ![Rozmowy agentów i okno nowego agenta](docs/tui-new-agent.png)
 

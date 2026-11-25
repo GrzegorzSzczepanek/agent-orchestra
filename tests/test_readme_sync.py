@@ -1,10 +1,10 @@
-"""README.pl.md ma opisywać te same funkcje co README.md (test pisze mocny model, tłumaczy worker)."""
+"""README.pl.md must describe the same features as README.md (the strong model writes the test, a worker translates)."""
 
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# nazwy poleceń, opcji i pól, które muszą wystąpić dosłownie w obu plikach
+# names of commands, options and fields that must appear verbatim in both files
 TOKENS = ["red_check", "red_check_failed", "expect_red", "--no-red-check", "integration_test_cmd", "--integration-test",
           "orchestra ledger budget --set 1.0", "price_in_per_mtok", "price_out_per_mtok", "over_budget",
           "orchestra ledger budget --check", "orchestra ledger add RUN TASK --outcome accepted|fixed|rejected",

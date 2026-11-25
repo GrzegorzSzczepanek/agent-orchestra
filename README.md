@@ -8,7 +8,7 @@ A cost-aware orchestrator for coding agents. Claude Code breaks a hard task into
 
 ![TUI overview: task table, live worker steps, buttons](docs/tui-overview.png)
 
-> The interface strings are in Polish. The screenshots show a made-up demo run.
+> The screenshots show a made-up demo run.
 
 ## Why
 
@@ -71,7 +71,7 @@ Claude is the default, not a requirement. Everything has a fallback, and everyth
 
 **Controlling client.** `orch` picks the first client it finds (`claude`, `opencode`, `codex`) or the one you name with `--client`. The same `orchestra` MCP server and the same task-splitting instructions are attached to each of them, only the wiring differs. If none is installed, `orch` does not fail: it opens the TUI alone, and the **▶ Plan** button (F7) takes a goal, which the planner role splits into tasks, or a plan file that you wrote yourself (`orchestra init-plan` writes a template).
 
-**Roles with a fallback.** `planner`, `reviewer` and `implementer` point at agents in `agents.toml`. If the configured agent is not installed, the role moves to the first available one (planners and reviewers prefer a `strong` tier, workers a `cheap` tier, then the order of `fallback_order`). The bar under the toolbar shows who does what, and `*` marks a change from `agents.toml`. **⚙ Role** (F8) lets you pick any agent for each role and set its model, and `orchestra roles` does the same from the shell. The choice is saved in `.orchestra/roles.json` and applies to the next run, including runs started from Claude Code, OpenCode or Codex. A weaker planner splits tasks worse, which is the price of not having a strong model.
+**Roles with a fallback.** `planner`, `reviewer` and `implementer` point at agents in `agents.toml`. If the configured agent is not installed, the role moves to the first available one (planners and reviewers prefer a `strong` tier, workers a `cheap` tier, then the order of `fallback_order`). The bar under the toolbar shows who does what, and `*` marks a change from `agents.toml`. **⚙ Roles** (F8) lets you pick any agent for each role and set its model, and `orchestra roles` does the same from the shell. The choice is saved in `.orchestra/roles.json` and applies to the next run, including runs started from Claude Code, OpenCode or Codex. A weaker planner splits tasks worse, which is the price of not having a strong model.
 
 ![Role bar with a fallback and the Role dialog](docs/tui-roles.png)
 
@@ -108,11 +108,11 @@ Everything is visible at once, and every action has both a button and a function
 | --- | --- | --- |
 | ＋ Agent | Ctrl+N | new agent session of any type from `agents.toml`, in its own worktree |
 | ▶ Plan | F7 | a goal for the planner role, or your own plan file, runs without any client |
-| ⚙ Role | F8 | which agent and model plays planner, reviewer, implementer |
-| ✉ Wiadom. (message) | F3 | message to a running agent, delivered as its next prompt |
-| ✎ Wskazówka (hint) | F4 | text appended to the next attempt of the chosen task's worker |
+| ⚙ Roles | F8 | which agent and model plays planner, reviewer, implementer |
+| ✉ Msg | F3 | message to a running agent, delivered as its next prompt |
+| ✎ Hint | F4 | text appended to the next attempt of the chosen task's worker |
 | 🔎 Info (details) | F5 | error, `test_cmd`, full test output and files of the last attempt |
-| ⛔ Anuluj (cancel run) | F6 | kills the working workers and ends the run (with confirmation) |
+| ⛔ Cancel | F6 | kills the working workers and ends the run (with confirmation) |
 | ± Diff | F2 | diff of the selected agent's worktree |
 
 Select a row on the left and the text field changes meaning: for an agent it is a prompt, for a task it is a hint (the line under the log tells you what will happen).
@@ -121,7 +121,7 @@ When a worker attempt fails its tests, you see the cause, not just a status:
 
 ![A failed attempt with its test output](docs/tui-failure.png)
 
-Agent conversations and reviewer remarks are in the `✉ wiadomości` (messages) row. You add a new agent from a list, without typing commands:
+Agent conversations and reviewer remarks are in the `✉ messages` row. You add a new agent from a list, without typing commands:
 
 ![Agent conversations and the new agent dialog](docs/tui-new-agent.png)
 
