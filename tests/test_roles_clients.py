@@ -1,4 +1,4 @@
-"""Fallback ról, wybór agentów (TUI, CLI), własni providerzy, klienci launchera, plan z TUI."""
+"""Role fallback, agent choice (TUI, CLI), custom providers, launcher clients, plan from the TUI."""
 
 import json
 import subprocess
@@ -40,7 +40,7 @@ def test_missing_agent_falls_back_by_tier():
 
 def test_fallback_order_and_available_agent_untouched():
     cfg = cfg3(fallback_order=("small", "big"))
-    assert cfg.role_name("planner") == "big"  # kolejność nie łamie preferencji tieru
+    assert cfg.role_name("planner") == "big"  # order does not break the tier preference
     cfg.roles["planner"] = "small"
     assert cfg.role_name("planner") == "small"  # zainstalowany agent z agents.toml zostaje
 
@@ -55,19 +55,19 @@ def test_user_override_wins_and_model_override_beats_env(tmp_path, monkeypatch):
     monkeypatch.setenv("M_ENV", "z-env")
     cfg = Config(agents={"a": agent("a", model_env="M_ENV", default_model="d"), "b": agent("b")}, roles={"planner": "a"})
     assert cfg.agents["a"].resolve_model() == "z-env"
-    save_overrides(tmp_path, roles={"planner": "b", "bogus": "nie-ma"}, models={"a": "z-tui"})
+    save_overrides(tmp_path, roles={"planner": "b", "bogus": "missing"}, models={"a": "from-tui"})
     cfg.reload_overrides(tmp_path)
     assert cfg.role_name("planner") == "b" and cfg.role_info("planner").reason == "user choice"
-    assert cfg.agents["a"].resolve_model() == "z-tui"
-    save_overrides(tmp_path, roles={"planner": ""}, models={"a": ""})  # pusta wartość kasuje wybór
+    assert cfg.agents["a"].resolve_model() == "from-tui"
+    save_overrides(tmp_path, roles={"planner": ""}, models={"a": ""})  # an empty value clears the choice
     cfg.reload_overrides(tmp_path)
     assert cfg.role_name("planner") == "a" and cfg.agents["a"].resolve_model() == "z-env"
-    assert read_overrides(tmp_path)[0] == {"bogus": "nie-ma"}
+    assert read_overrides(tmp_path)[0] == {"bogus": "missing"}
 
 
 def test_broken_overrides_file_is_ignored(tmp_path):
     (tmp_path / ".orchestra").mkdir()
-    (tmp_path / ".orchestra" / "roles.json").write_text("{nie json")
+    (tmp_path / ".orchestra" / "roles.json").write_text("{not json")
     assert read_overrides(tmp_path) == ({}, {})
 
 
@@ -114,13 +114,13 @@ def test_cli_roles_set_and_init_plan(tmp_path, capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "planner" in out and "opencode" in out
     assert read_overrides(repo)[0] == {"planner": "opencode"}
-    assert cli_main([*base, "--set", "planner=nie-ma"]) == 2
+    assert cli_main([*base, "--set", "planner=missing"]) == 2
     plan = tmp_path / "plan.json"
     assert cli_main(["init-plan", str(plan)]) == 0
     from orchestra.plan import Plan
 
     assert len(Plan.model_validate_json(plan.read_text()).tasks) == 2
-    assert cli_main(["init-plan", str(plan)]) == 1  # nie nadpisuje
+    assert cli_main(["init-plan", str(plan)]) == 1  # does not overwrite
 
 
 # --- klienci launchera ---
@@ -170,7 +170,7 @@ def test_build_launch_per_client(tmp_path):
 def test_orch_script_syntax_and_no_hard_claude_requirement():
     text = (ROOT / "scripts" / "orch").read_text()
     assert subprocess.run(["bash", "-n", str(ROOT / "scripts" / "orch")]).returncode == 0
-    assert "--client" in text and "command -v claude" not in text  # brak claude nie kończy się już błędem
+    assert "--client" in text and "command -v claude" not in text  # a missing claude is no longer an error
 
 
 # --- TUI ---
@@ -196,21 +196,21 @@ async def test_tui_roles_screen_saves_and_shows_fallback(git_repo):
         screen.query_one("#role-planner", Select).value = "small"
         screen.query_one("#model-agent", Select).value = "small"
         await pilot.pause(0.1)
-        screen.query_one("#model-value", Input).value = "moj/model"
+        screen.query_one("#model-value", Input).value = "my/model"
         await pilot.click("#roles-ok")
         await pilot.pause(0.4)
         assert read_overrides(git_repo) == ({"planner": "small", "reviewer": "big", "implementer": "small"},
-                                            {"small": "moj/model"})
+                                            {"small": "my/model"})
         bar = str(app._rolebar.render())
-        assert "planner: small" in bar and "[moj/model]" in bar
+        assert "planner: small" in bar and "[my/model]" in bar
 
 
 async def test_tui_runs_plan_file_with_custom_scripted_worker(git_repo):
-    """Bez żadnego klienta: własny plan z pliku i własny agent (skrypt) jako worker."""
+    """Without any client: own plan from a file and own agent (script) as the worker."""
     code = "open('hello.py','w').write('V = 1\\n')"
-    worker = AgentConfig(name="skrypt", headless=(PY, "-c", code, "{task}"), tier="cheap")
-    cfg = Config(agents={"skrypt": worker}, roles={"implementer": "skrypt", "planner": "skrypt"})
-    plan = {"goal": "g", "tasks": [{"id": "hello", "description": "d", "files": ["hello.py"], "acceptance": ["jest"],
+    worker = AgentConfig(name="script", headless=(PY, "-c", code, "{task}"), tier="cheap")
+    cfg = Config(agents={"script": worker}, roles={"implementer": "script", "planner": "script"})
+    plan = {"goal": "g", "tasks": [{"id": "hello", "description": "d", "files": ["hello.py"], "acceptance": ["exists"],
                                      "test_cmd": f"{PY} -c \"import hello; assert hello.V == 1\"", "difficulty": "easy"}]}
     (git_repo / "plan.json").write_text(json.dumps(plan))
     store = EventStore(":memory:")
@@ -220,7 +220,7 @@ async def test_tui_runs_plan_file_with_custom_scripted_worker(git_repo):
         await wait_for(pilot, lambda: bool(app.screen.query("#plan-file-ok")))
         assert app.screen.query_one("#plan-file", Input).value == "plan.json"
         await pilot.click("#plan-file-ok")
-        # czekamy na stan w aplikacji (TUI odczytuje log cyklicznie), a nie tylko na zdarzenie w bazie
+        # wait for the state in the app (the TUI polls the log), not only for the event in the database
         await wait_for(pilot, lambda: (r := app._latest_run()) is not None and r.finished, timeout=60)
         run = app._latest_run()
         assert run is not None and run.tasks["hello"].status == "done"
@@ -234,7 +234,7 @@ async def test_tui_plan_screen_reports_bad_file(git_repo):
     async with app.run_test(size=(130, 40)) as pilot:
         await pilot.press("f7")
         await wait_for(pilot, lambda: bool(app.screen.query("#plan-file-ok")))
-        app.screen.query_one("#plan-file", Input).value = "nie-ma.json"
+        app.screen.query_one("#plan-file", Input).value = "missing.json"
         await pilot.click("#plan-file-ok")
         await pilot.pause(0.5)
         assert not any(e.kind == "run_start" for e in store.events(limit=100))
@@ -244,11 +244,11 @@ async def test_missing_test_binary_stops_before_worker_spends_tokens(git_repo):
     from orchestra.delegate import delegate
 
     cfg = Config(agents={}, roles={"implementer": "fake"})
-    res = await delegate(cfg, git_repo, "zrób coś", worker="fake", test_cmd="nie-ma-takiego-polecenia -q",
+    res = await delegate(cfg, git_repo, "do something", worker="fake", test_cmd="no-such-command -q",
                          fake_files={"x.py": "1"})
-    assert res.status == "config_error" and "nie-ma-takiego-polecenia" in res.error
-    assert res.worker_text == "" and res.diff == ""  # worker w ogóle nie ruszył
-    ok = await delegate(cfg, git_repo, "zrób coś", worker="fake", test_cmd=f"{PY} -c pass", fake_files={"x.py": "1"})
+    assert res.status == "config_error" and "no-such-command" in res.error
+    assert res.worker_text == "" and res.diff == ""  # the worker never started
+    ok = await delegate(cfg, git_repo, "do something", worker="fake", test_cmd=f"{PY} -c pass", fake_files={"x.py": "1"})
     assert ok.status == "ok"
-    rel = await delegate(cfg, git_repo, "zrób coś", worker="fake", test_cmd="./brak.sh", fake_files={"x.py": "1"})
+    rel = await delegate(cfg, git_repo, "do something", worker="fake", test_cmd="./missing.sh", fake_files={"x.py": "1"})
     assert rel.status == "config_error"

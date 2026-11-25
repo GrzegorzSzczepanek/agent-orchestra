@@ -10,7 +10,7 @@ from orchestra.render import render_events
 from orchestra.store import EventStore
 from orchestra.tui import OrchestraApp, PermissionScreen
 
-MOCK = [sys.executable, str(Path(__file__).resolve().parents[1] / "src" / "orchestra" / "testing" / "mock_agent.py")]
+MOCK = [sys.executable, "-m", "orchestra.testing.mock_agent"]
 
 
 def log_text(app, sel="#log") -> str:

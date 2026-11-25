@@ -1,7 +1,7 @@
-"""`orchestra doctor`: diagnostyka środowiska (cmd, logowanie, modele, headless, ACP, opcjonalnie inni agenci).
+"""`orchestra doctor`: environment diagnostics (cmd, login, models, headless, ACP, optionally other agents).
 
-Raport PASS/FAIL/SKIP/WARN trafia na ekran i do JSON, który można wkleić do rozmowy.
-Żadna wartość zmiennej środowiskowej ani token nie trafia do raportu (maskowanie w mask_secrets).
+The PASS/FAIL/SKIP/WARN report goes to the screen and to a JSON file you can paste into a chat.
+No environment variable value or token ends up in the report (masked by mask_secrets).
 """
 
 from __future__ import annotations
@@ -73,10 +73,10 @@ class Report:
         for c in self.checks:
             lines.append(f"[{c.status}] {c.name}" + (f": {c.detail}" if c.detail else ""))
             if c.hint:
-                lines.append(f"       co zrobić: {c.hint}")
+                lines.append(f"       what to do: {c.hint}")
         s = self.summary()
         lines.append("")
-        lines.append(f"Podsumowanie: {s[PASS]} PASS, {s[FAIL]} FAIL, {s[WARN]} WARN, {s[SKIP]} SKIP")
+        lines.append(f"Summary: {s[PASS]} PASS, {s[FAIL]} FAIL, {s[WARN]} WARN, {s[SKIP]} SKIP")
         return "\n".join(lines)
 
     def save(self, path: str | Path) -> None:
@@ -87,17 +87,17 @@ class _NullClient(Client):
     async def session_update(self, session_id: str, update: Any, **kwargs: Any) -> None:
         return None
 
-    async def request_permission(self, *a: Any, **k: Any) -> Any:  # nie powinno się zdarzyć przy samym initialize
-        raise RuntimeError("diagnostyka nie obsługuje uprawnień")
+    async def request_permission(self, *a: Any, **k: Any) -> Any:  # should not happen during initialize alone
+        raise RuntimeError("diagnostics do not handle permissions")
 
 
 async def probe_acp(
     argv: Sequence[str], *, cwd: str, timeout: float = 30, new_session: bool = False,
     env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Startuje agenta ACP, robi initialize (i opcjonalnie session/new), zamyka proces.
+    """Starts an ACP agent, runs initialize (and optionally session/new), closes the process.
 
-    Zwraca {"agent": {...}, "session": "ok" | błąd}. Wyjątki propagują do wywołującego.
+    Returns {"agent": {...}, "session": "ok" | error}. Exceptions propagate to the caller.
     """
 
     async def _go() -> dict[str, Any]:
@@ -107,14 +107,14 @@ async def probe_acp(
             out: dict[str, Any] = {
                 "agent": {"name": getattr(info, "name", ""), "version": getattr(info, "version", "")},
                 "protocol_version": getattr(init, "protocol_version", None),
-                "session": "pominięte",
+                "session": "skipped",
             }
             if new_session:
                 try:
                     await conn.new_session(cwd=cwd, mcp_servers=[])
                     out["session"] = "ok"
-                except Exception as exc:  # noqa: BLE001 - błąd sesji (np. brak logowania) jest wynikiem diagnostyki
-                    out["session"] = f"błąd: {exc}"
+                except Exception as exc:  # noqa: BLE001 - a session error (e.g. not logged in) is a diagnostic result
+                    out["session"] = f"error: {exc}"
             return out
 
     return await asyncio.wait_for(_go(), timeout)
@@ -136,12 +136,12 @@ _VERSION_RE = re.compile(r"^v?\d+\.\d+(\.\d+)?\S{0,30}$")
 
 
 def _looks_like_version(line: str) -> bool:
-    """Wersja to krótki token (np. `1.93.2`), a nie surowa linia błędu czy kawałek minifikowanego kodu."""
+    """A version is a short token (e.g. `1.93.2`), not a raw error line or a piece of minified code."""
     return bool(_VERSION_RE.match(line.split(" ")[0])) and len(line) <= 80
 
 
 def _node_engines(binary: str) -> str:
-    """Pole engines.node pakietu npm, do którego należy binarka (idziemy w górę od realpath)."""
+    """engines.node field of the npm package that owns the binary (walk up from the realpath)."""
     exe = shutil.which(binary)
     if not exe:
         return ""
@@ -158,7 +158,7 @@ def _node_engines(binary: str) -> str:
 
 
 def _node_satisfies(version: str, engines: str) -> bool | None:
-    """Obsługuje zakres `>=N[.M]`; dla innych zapisów zwraca None (nie rozstrzygamy)."""
+    """Handles the `>=N[.M]` range; returns None for other notations (undecided)."""
     m = re.fullmatch(r"\s*>=\s*v?(\d+)(?:\.(\d+))?[\d.]*\s*", engines)
     v = re.match(r"v?(\d+)\.(\d+)", version)
     if not (m and v):
@@ -167,7 +167,7 @@ def _node_satisfies(version: str, engines: str) -> bool | None:
 
 
 async def _diagnose_crash(binary: str, out: str, err: str, timeout: float) -> tuple[str, str]:
-    """Zamienia crash przy starcie (stack trace z cli.mjs) w czytelny komunikat i podpowiedź."""
+    """Turns a startup crash (stack trace from cli.mjs) into a readable message and hint."""
     engines = _node_engines(binary)
     node = ""
     try:
@@ -177,17 +177,17 @@ async def _diagnose_crash(binary: str, out: str, err: str, timeout: float) -> tu
         pass
     if engines and node and _node_satisfies(node, engines) is False:
         need = engines.replace(">=", "").strip()
-        return (f"{binary} nie startuje: wymagany Node >={need}, masz {node}",
-                f"przełącz Node (np. `nvm use {need}`) albo zainstaluj pakiet pod nowszym Node")
+        return (f"{binary} does not start: Node >={need} required, you have {node}",
+                f"switch Node (e.g. `nvm use {need}`) or install the package under a newer Node")
     lines = [l.strip() for l in (err or out).splitlines() if l.strip()]
     err_line = next((l for l in reversed(lines) if re.match(r"^\w*Error\b", l)), "")
     if not err_line:
-        # Node obcina stderr do ok. 64 KB przy zamknięciu potoku, więc stack trace po długiej linii cli.mjs ginie
-        why = "brak pola engines w zainstalowanym pakiecie" if not engines else f"engines {engines}"
-        return (f"{binary} nie startuje pod Node {node or '?'} ({why}, komunikat błędu obcięty)",
-                "aktualny command-code wymaga Node >=22: `nvm use 22` albo `npm i -g command-code@latest` pod Node 22")
-    return (f"{binary} nie startuje ({err_line[:160]}), Node {node or '?'}",
-            "uruchom `cmd --version` ręcznie i sprawdź wersję Node względem engines pakietu")
+        # Node truncates stderr to about 64 KB when the pipe closes, so a stack trace after a long cli.mjs line is lost
+        why = "no engines field in the installed package" if not engines else f"engines {engines}"
+        return (f"{binary} does not start under Node {node or '?'} ({why}, error message truncated)",
+                "current command-code needs Node >=22: `nvm use 22` or `npm i -g command-code@latest` under Node 22")
+    return (f"{binary} does not start ({err_line[:160]}), Node {node or '?'}",
+            "run `cmd --version` by hand and check the Node version against the package engines")
 
 
 async def _check_commandcode(
@@ -195,11 +195,11 @@ async def _check_commandcode(
 ) -> None:
     binary = (agent.acp or agent.headless or ("cmd",))[0]
     if not shutil.which(binary):
-        rep.add("cmd: binarka", FAIL, f"brak `{binary}` w PATH",
-                "zainstaluj: npm i -g command-code (potem uruchom ponownie ten terminal)")
-        for name in ("cmd: logowanie", "cmd: lista modeli", "cmd: smoke test headless", "cmd: ACP initialize",
+        rep.add("cmd: binary", FAIL, f"`{binary}` not found in PATH",
+                "install: npm i -g command-code (then restart this terminal)")
+        for name in ("cmd: login", "cmd: model list", "cmd: smoke test headless", "cmd: ACP initialize",
                      "cmd: ACP session/new"):
-            rep.add(name, SKIP, "pominięte, bo brak binarki")
+            rep.add(name, SKIP, "skipped because the binary is missing")
         return
 
     try:
@@ -213,56 +213,56 @@ async def _check_commandcode(
         crashed, detail, hint, version = True, f"{binary}: {type(exc).__name__}: {exc}", "", ""
     rep.meta["cmd_version"] = "" if crashed else version
     if crashed:
-        rep.add("cmd: binarka", FAIL, detail, hint)
-        for name in ("cmd: logowanie", "cmd: lista modeli", "cmd: smoke test headless", "cmd: ACP initialize",
+        rep.add("cmd: binary", FAIL, detail, hint)
+        for name in ("cmd: login", "cmd: model list", "cmd: smoke test headless", "cmd: ACP initialize",
                      "cmd: ACP session/new"):
-            rep.add(name, SKIP, "pominięte, bo cmd nie startuje")
+            rep.add(name, SKIP, "skipped because cmd does not start")
         return
-    rep.add("cmd: binarka", PASS, f"{binary} {version}")
+    rep.add("cmd: binary", PASS, f"{binary} {version}")
 
-    # logowanie (zmienna COMMAND_CODE_API_KEY ma pierwszeństwo przed `cmd login`)
+    # login (the COMMAND_CODE_API_KEY variable takes precedence over `cmd login`)
     try:
         code, out, err = await _capture([binary, "status"], timeout)
         text = (out + err)
         if code == 0:
-            rep.add("cmd: logowanie", PASS, _first_line(text.replace("- Checking authentication status...", "")) or "zalogowany")
+            rep.add("cmd: login", PASS, _first_line(text.replace("- Checking authentication status...", "")) or "logged in")
         else:
-            rep.add("cmd: logowanie", FAIL, "niezalogowany",
-                    "uruchom ręcznie `cmd login` (albo ustaw COMMAND_CODE_API_KEY, np. na serwerze bez przeglądarki)")
+            rep.add("cmd: login", FAIL, "not logged in",
+                    "run `cmd login` yourself (or set COMMAND_CODE_API_KEY, e.g. on a server without a browser)")
     except Exception as exc:  # noqa: BLE001
-        rep.add("cmd: logowanie", FAIL, f"{type(exc).__name__}: {exc}")
+        rep.add("cmd: login", FAIL, f"{type(exc).__name__}: {exc}")
 
-    # lista modeli i wybrany model
+    # model list and the selected model
     models = []
     try:
         code, out, err = await _capture([binary, "--list-models"], timeout)
         models = parse_models(out)
         if code == 0 and models:
-            rep.add("cmd: lista modeli", PASS, f"{len(models)} modeli")
+            rep.add("cmd: model list", PASS, f"{len(models)} models")
         else:
-            rep.add("cmd: lista modeli", FAIL, _first_line(err) or "pusta lista", "zaktualizuj: cmd update")
+            rep.add("cmd: model list", FAIL, _first_line(err) or "empty list", "update: cmd update")
     except Exception as exc:  # noqa: BLE001
-        rep.add("cmd: lista modeli", FAIL, f"{type(exc).__name__}: {exc}")
+        rep.add("cmd: model list", FAIL, f"{type(exc).__name__}: {exc}")
     chosen = agent.resolve_model(model or None)
     if not chosen:
-        rep.add("cmd: wybrany model", WARN, "nie ustawiono modelu dla workera",
-                f"ustaw {agent.model_env or 'default_model'} na ID z `cmd --list-models`, np. deepseek/deepseek-v4.1-flash")
+        rep.add("cmd: selected model", WARN, "no model set for the worker",
+                f"set {agent.model_env or 'default_model'} to an ID from `cmd --list-models`, e.g. deepseek/deepseek-v4.1-flash")
     elif models:
         resolved = resolve_model(chosen, models)
         if resolved:
-            rep.add("cmd: wybrany model", PASS, f"{chosen} -> {resolved}")
+            rep.add("cmd: selected model", PASS, f"{chosen} -> {resolved}")
         else:
-            rep.add("cmd: wybrany model", FAIL, f"`{chosen}` nie ma na liście modeli",
-                    "wybierz ID z `cmd --list-models` (pełne albo część po ostatnim '/')")
+            rep.add("cmd: selected model", FAIL, f"`{chosen}` is not in the model list",
+                    "pick an ID from `cmd --list-models` (full, or the part after the last '/')")
     else:
-        rep.add("cmd: wybrany model", SKIP, f"{chosen} (bez listy modeli nie da się zweryfikować)")
+        rep.add("cmd: selected model", SKIP, f"{chosen} (cannot be verified without the model list)")
 
-    # smoke test headless (zużywa kredyty, więc tylko na życzenie)
+    # headless smoke test (uses credits, so only on request)
     if not smoke:
-        rep.add("cmd: smoke test headless", SKIP, "pominięty (zużywa niewielką ilość kredytów)",
-                "uruchom `orchestra doctor --smoke`; dokumentacja nie mówi, czy plan Go obejmuje tryb headless")
+        rep.add("cmd: smoke test headless", SKIP, "skipped (uses a small amount of credits)",
+                "run `orchestra doctor --smoke`; the docs do not say whether the Go plan covers headless mode")
     else:
-        argv = [binary, "-p", "odpowiedz: ok", "--max-turns", "1", "--output-format", "json", "--skip-onboarding"]
+        argv = [binary, "-p", "reply: ok", "--max-turns", "1", "--output-format", "json", "--skip-onboarding"]
         if chosen:
             argv += ["--model", chosen]
         try:
@@ -270,18 +270,18 @@ async def _check_commandcode(
             hr = parse_headless_output(out)
             if code == 0 and hr.subtype == "success":
                 rep.add("cmd: smoke test headless", PASS,
-                        f"odpowiedź: {hr.final_text[:60]!r}, tokeny wej/wyj: {hr.usage.get('tokens_in', 0)}/{hr.usage.get('tokens_out', 0)}")
+                        f"reply: {hr.final_text[:60]!r}, tokens in/out: {hr.usage.get('tokens_in', 0)}/{hr.usage.get('tokens_out', 0)}")
             else:
                 status = status_for_exit_code(code)
                 hint = {
-                    "auth_failed": "zaloguj się: cmd login",
-                    "insufficient_credits": "brak kredytów lub limit planu (Go: 3 USD/5 h, 6 USD/7 dni, 10 USD/mies.)",
-                    "rate_limited": "limit zapytań, spróbuj za chwilę",
-                    "max_turns": "limit tur osiągnięty (to też oznacza, że headless działa)",
-                }.get(status, "wklej ten raport, dopasuję parser")
+                    "auth_failed": "log in: cmd login",
+                    "insufficient_credits": "out of credits or plan limit (Go: 3 USD/5 h, 6 USD/7 days, 10 USD/month)",
+                    "rate_limited": "rate limited, try again in a moment",
+                    "max_turns": "turn limit reached (this also means headless works)",
+                }.get(status, "paste this report so the parser can be adjusted")
                 st = WARN if status == "max_turns" else FAIL
                 rep.add("cmd: smoke test headless", st,
-                        f"{status} (kod {code}, subtype={hr.subtype or '-'}): {hr.error or _first_line(err)}", hint)
+                        f"{status} (code {code}, subtype={hr.subtype or '-'}): {hr.error or _first_line(err)}", hint)
         except Exception as exc:  # noqa: BLE001
             rep.add("cmd: smoke test headless", FAIL, f"{type(exc).__name__}: {exc}")
 
@@ -290,15 +290,15 @@ async def _check_commandcode(
     try:
         info = await probe_acp(argv, cwd=cwd, timeout=timeout, new_session=True, env=agent.acp_env())
         a = info["agent"]
-        rep.add("cmd: ACP initialize", PASS, f"{a['name']} {a['version']}, protokół v{info['protocol_version']}")
+        rep.add("cmd: ACP initialize", PASS, f"{a['name']} {a['version']}, protocol v{info['protocol_version']}")
         if info["session"] == "ok":
             rep.add("cmd: ACP session/new", PASS)
         else:
-            rep.add("cmd: ACP session/new", FAIL, info["session"], "uruchom ręcznie `cmd login` (auth_required)")
-    except Exception as exc:  # noqa: BLE001 - także asyncio.TimeoutError
+            rep.add("cmd: ACP session/new", FAIL, info["session"], "run `cmd login` yourself (auth_required)")
+    except Exception as exc:  # noqa: BLE001 - asyncio.TimeoutError too
         rep.add("cmd: ACP initialize", FAIL, f"{type(exc).__name__}: {exc}",
-                "sprawdź `cmd acp` ręcznie; w `settings` mod `acp` nie może być wyłączony")
-        rep.add("cmd: ACP session/new", SKIP, "pominięte")
+                "check `cmd acp` by hand; the `acp` mod must not be disabled in `settings`")
+        rep.add("cmd: ACP session/new", SKIP, "skipped")
 
 
 async def _check_optional_agent(rep: Report, name: str, agent: AgentConfig, *, timeout: float, cwd: str) -> None:
@@ -306,11 +306,11 @@ async def _check_optional_agent(rep: Report, name: str, agent: AgentConfig, *, t
     acp_bin = agent.acp[0] if agent.acp else ""
     if headless_bin:
         found = shutil.which(headless_bin)
-        rep.add(f"{name}: binarka", PASS if found else SKIP, headless_bin if found else f"brak `{headless_bin}` w PATH")
+        rep.add(f"{name}: binary", PASS if found else SKIP, headless_bin if found else f"`{headless_bin}` not found in PATH")
     if not acp_bin:
         return
     if not shutil.which(acp_bin):
-        rep.add(f"{name}: ACP initialize", SKIP, f"brak `{acp_bin}` w PATH")
+        rep.add(f"{name}: ACP initialize", SKIP, f"`{acp_bin}` not found in PATH")
         return
     try:
         info = await probe_acp(list(agent.acp), cwd=cwd, timeout=timeout, new_session=False, env=agent.acp_env())
@@ -318,7 +318,7 @@ async def _check_optional_agent(rep: Report, name: str, agent: AgentConfig, *, t
         rep.add(f"{name}: ACP initialize", PASS, f"{a['name']} {a['version']}".strip() or "ok")
     except Exception as exc:  # noqa: BLE001
         rep.add(f"{name}: ACP initialize", FAIL, f"{type(exc).__name__}: {exc}",
-                "sprawdź komendę `acp` w agents.toml i wersję agenta")
+                "check the `acp` command in agents.toml and the agent version")
 
 
 async def run_doctor(
@@ -338,7 +338,7 @@ async def run_doctor(
     with tempfile.TemporaryDirectory(prefix="orchestra-doctor-") as cwd:
         agent = config.agents.get(CMD_AGENT)
         if agent is None:
-            rep.add("cmd: konfiguracja", FAIL, f"brak agenta `{CMD_AGENT}` w agents.toml")
+            rep.add("cmd: configuration", FAIL, f"agent `{CMD_AGENT}` missing in agents.toml")
         else:
             await _check_commandcode(rep, agent, smoke=smoke, model=model, timeout=timeout, cwd=cwd)
         if others:

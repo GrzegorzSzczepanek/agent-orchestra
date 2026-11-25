@@ -1,7 +1,7 @@
-"""Klient sterujący dla launchera `orch`: Claude Code, OpenCode, Codex albo tryb bez klienta (samo TUI).
+"""Controlling client for the `orch` launcher: Claude Code, OpenCode, Codex or no client (TUI only).
 
-Każdy klient dostaje ten sam serwer MCP `orchestra` (run_plan, run_status, delegate, wiadomości) i tę samą
-instrukcję rozbijania zadań. Różni się tylko sposób podpięcia, bo każde narzędzie ma inną konfigurację.
+Every client gets the same `orchestra` MCP server (run_plan, run_status, delegate, messages) and the same
+task splitting instructions. Only the wiring differs, because each tool is configured differently.
 """
 
 from __future__ import annotations
@@ -14,34 +14,34 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-CLIENTS = ("claude", "opencode", "codex")  # kolejność autodetekcji
+CLIENTS = ("claude", "opencode", "codex")  # autodetection order
 NONE = "none"
 TOOLS = ("delegate", "run_plan", "run_status", "post_message", "read_inbox", "list_agents")
-INTRO = ("Masz serwer MCP orchestra (workery tańszymi modelami). Przy trudnych zadaniach, które da się rozbić, "
-         "postępuj według poniższej instrukcji.")
+INTRO = ("You have the orchestra MCP server (workers on cheaper models). For hard tasks that can be split, "
+         "follow the instructions below.")
 
 
 @dataclass
 class Launch:
     argv: list[str]
-    env: dict[str, str] = field(default_factory=dict)  # tylko zmienne dodawane do środowiska klienta
+    env: dict[str, str] = field(default_factory=dict)  # only variables added to the client's environment
 
 
 def detect_client(preferred: str = "") -> str:
-    """Wskazany klient (jeśli zainstalowany), inaczej pierwszy dostępny, inaczej NONE (tryb bez klienta)."""
+    """The requested client (if installed), otherwise the first available one, otherwise NONE (no client mode)."""
     if preferred and preferred != "auto":
         if preferred == NONE:
             return NONE
         if preferred not in CLIENTS:
-            raise ValueError(f"Nieznany klient {preferred!r}, dostępne: {', '.join(CLIENTS)}, {NONE}")
+            raise ValueError(f"Unknown client {preferred!r}, available: {', '.join(CLIENTS)}, {NONE}")
         if shutil.which(preferred) is None:
-            raise FileNotFoundError(f"Brak polecenia {preferred} w PATH (--client auto wybierze dostępnego)")
+            raise FileNotFoundError(f"Command {preferred} not found in PATH (--client auto picks an available one)")
         return preferred
     return next((c for c in CLIENTS if shutil.which(c)), NONE)
 
 
 def skill_text(skill_file: str | Path) -> str:
-    """Treść skilla bez nagłówka frontmatter."""
+    """Skill body without the frontmatter header."""
     text = Path(skill_file).read_text(encoding="utf-8")
     parts = text.split("---\n", 2)
     return (parts[2] if text.startswith("---\n") and len(parts) == 3 else text).strip()
@@ -72,24 +72,32 @@ def build_launch(client: str, repo: str | Path, config: str | Path, skill: str, 
         return Launch(["opencode", *extra], {"OPENCODE_CONFIG_CONTENT": json.dumps(cfg)})
     if client == "codex":
         env = ", ".join(f"{k}={json.dumps(v)}" for k, v in _server_env(repo, config).items())
-        first = ("Na razie nic nie rób, potwierdź jednym zdaniem. Zapamiętaj instrukcję na kolejne zadania:\n\n" + instructions)
+        first = ("Do nothing yet, confirm in one sentence. Remember these instructions for the next tasks:\n\n" + instructions)
         return Launch(["codex", "-c", f"mcp_servers.orchestra.command={json.dumps(_server_cmd())}",
                        "-c", "mcp_servers.orchestra.args=[]", "-c", f"mcp_servers.orchestra.env={{{env}}}",
-                       # bez tego Codex pyta o zgodę przy każdym wywołaniu run_plan i run_status
+                       # without this Codex asks for approval on every run_plan and run_status call
                        "-c", 'mcp_servers.orchestra.default_tools_approval_mode="approve"', *extra, first])
-    raise ValueError(f"Nieznany klient: {client}")
+    raise ValueError(f"Unknown client: {client}")
 
 
 def main(argv: list[str] | None = None) -> int:
     from .node_env import ensure_node
 
-    ap = argparse.ArgumentParser(prog="orchestra-client", description="Uruchamia klienta (claude, opencode, codex) z serwerem orchestra")
-    ap.add_argument("--client", default="auto", help=f"auto, {NONE} albo jeden z: {', '.join(CLIENTS)}")
-    ap.add_argument("--repo", default=".")
-    ap.add_argument("--config", required=True)
-    ap.add_argument("--skill", required=True, help="plik SKILL.md z instrukcją rozbijania zadań")
-    ap.add_argument("--detect", action="store_true", help="tylko wypisz wybranego klienta")
-    ap.add_argument("extra", nargs="*", help="argumenty przekazane klientowi (po --)")
+    ap = argparse.ArgumentParser(
+        prog="orchestra-client", formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Start a coding client (claude, opencode, codex) wired to the orchestra MCP server.\n"
+                    "Usually called by the `orch` launcher.",
+        epilog="Examples:\n"
+               "  orchestra-client --detect --config agents.toml --skill SKILL.md\n"
+               "  orchestra-client --client codex --repo . --config agents.toml --skill SKILL.md\n"
+               "  orchestra-client --config agents.toml --skill SKILL.md -- --model opus")
+    ap.add_argument("--client", default="auto",
+                    help=f"auto (default), {NONE} or one of: {', '.join(CLIENTS)}")
+    ap.add_argument("--repo", default=".", help="git repository to work in (default: current directory)")
+    ap.add_argument("--config", required=True, help="path to agents.toml")
+    ap.add_argument("--skill", required=True, help="SKILL.md file with the task splitting instructions")
+    ap.add_argument("--detect", action="store_true", help="only print the selected client and exit")
+    ap.add_argument("extra", nargs="*", help="arguments passed on to the client (after --)")
     args = ap.parse_args(argv)
     try:
         client = detect_client(args.client)
@@ -100,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
         print(client)
         return 0
     if client == NONE:
-        print("Brak klienta (claude, opencode, codex) w PATH.", file=sys.stderr)
+        print("No client (claude, opencode, codex) found in PATH.", file=sys.stderr)
         return 3
     ensure_node()
     launch = build_launch(client, args.repo, args.config, skill_text(args.skill), args.extra)

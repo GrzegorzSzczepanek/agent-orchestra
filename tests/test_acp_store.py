@@ -10,7 +10,7 @@ from acp.schema import McpServerStdio
 from orchestra.acp_client import AgentSession, allow_once, reject_all
 from orchestra.store import EventStore
 
-MOCK = [sys.executable, str(Path(__file__).resolve().parents[1] / "src" / "orchestra" / "testing" / "mock_agent.py")]
+MOCK = [sys.executable, "-m", "orchestra.testing.mock_agent"]
 
 
 @pytest.fixture

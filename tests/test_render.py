@@ -94,7 +94,7 @@ def test_tool_update_formatting() -> None:
 def test_permission_request_formatting() -> None:
     lines = render_events([ev("permission_request", {"title": "Write file"})])
     assert len(lines) == 1
-    assert str(lines[0]).startswith("? uprawnienie: ")
+    assert str(lines[0]).startswith("? permission: ")
     assert "Write file" in str(lines[0])
 
 
@@ -107,7 +107,7 @@ def test_permission_response_option_id() -> None:
 def test_permission_response_denied_fallback() -> None:
     lines = render_events([ev("permission_response", {})])
     assert len(lines) == 1
-    assert "odmowa" in str(lines[0])
+    assert "denied" in str(lines[0])
 
 
 def test_prompt_end_formatting() -> None:
@@ -131,13 +131,13 @@ def test_session_start_formatting() -> None:
 def test_session_end_formatting() -> None:
     lines = render_events([ev("session_end")])
     assert len(lines) == 1
-    assert str(lines[0]) == "○ sesja zakończona"
+    assert str(lines[0]) == "○ session ended"
 
 
 def test_error_formatting() -> None:
     lines = render_events([ev("error", {"error": "boom"})])
     assert len(lines) == 1
-    assert str(lines[0]).startswith("✗ błąd: ")
+    assert str(lines[0]).startswith("✗ error: ")
     assert "boom" in str(lines[0])
 
 

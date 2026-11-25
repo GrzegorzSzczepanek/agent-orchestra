@@ -1,4 +1,4 @@
-"""Serwer MCP (FastMCP, stdio) z narzędziem delegate, rejestrowany w Claude Code."""
+"""MCP server (FastMCP, stdio) with the delegate tool, registered in Claude Code."""
 
 from __future__ import annotations
 
@@ -26,10 +26,10 @@ def build_server(config: Config | None = None, repo: str | Path | None = None) -
     ensure_local_exclude(default_repo)
     cfg = config or load_config(os.environ.get("ORCHESTRA_CONFIG", "agents.toml"), repo=default_repo)
     store = EventStore(os.environ.get("ORCHESTRA_DB", default_repo / ".orchestra" / "events.db"))
-    me = os.environ.get("ORCHESTRA_AGENT", "")  # nazwa agenta, któremu serwer jest podpięty (ustawia TUI)
+    me = os.environ.get("ORCHESTRA_AGENT", "")  # name of the agent this server is attached to (set by the TUI)
 
     def budget_block() -> dict[str, Any] | None:
-        """Gdy budżet sesji workerów jest przekroczony, narzędzia zwracają błąd zamiast uruchamiać workery."""
+        """When the worker session budget is exceeded, tools return an error instead of starting workers."""
         bs = budget_state(default_repo, store, cfg)
         if bs is not None and bs.exceeded:
             return {"error": "session_budget_exceeded", "message": bs.message(), "spent_usd": round(bs.spent_usd, 4),
@@ -48,16 +48,16 @@ def build_server(config: Config | None = None, repo: str | Path | None = None) -
         fake_files: dict[str, str] | None = None,
         red_check: bool = False,
     ) -> dict[str, Any]:
-        """Deleguje proste zadanie implementacyjne tańszemu workerowi w osobnym git worktree.
+        """Delegates a simple implementation task to a cheaper worker in a separate git worktree.
 
-        Zwraca status, diff względem bazy, wynik komendy testowej i zużycie tokenów.
-        test_cmd jest uruchamiane bez powłoki (shlex), np. "pytest -q tests/test_x.py".
-        worker "fake" służy do testów i zapisuje pliki z fake_files.
-        red_check=true: test_cmd musi failować przed zmianami workera (inaczej status red_check_failed).
+        Returns the status, the diff against the base, the test command result and token usage.
+        test_cmd runs without a shell (shlex), e.g. "pytest -q tests/test_x.py".
+        The "fake" worker is for tests and writes the files given in fake_files.
+        red_check=true: test_cmd must fail before the worker's changes (otherwise status red_check_failed).
         """
         if (blocked := budget_block()) is not None:
             return blocked
-        cfg.reload_overrides(default_repo)  # role i modele wybrane w TUI
+        cfg.reload_overrides(default_repo)  # roles and models chosen in the TUI
         result = await run_delegate(
             cfg,
             default_repo,
@@ -94,31 +94,31 @@ def build_server(config: Config | None = None, repo: str | Path | None = None) -
         integration_test_cmd: str = "",
         red_check: bool = True,
     ) -> dict[str, Any]:
-        """Wykonuje plan zadań (DAG) tanimi workerami w tle i od razu zwraca run_id.
+        """Runs a task plan (DAG) with cheap workers in the background and returns a run_id right away.
 
-        Rozbij trudny cel na małe zadania: każde z `id`, `description` (samowystarczalny opis),
-        `files`, `acceptance`, `test_cmd` (komenda bez powłoki, np. "pytest -q tests/test_x.py"),
-        `cwd` (podkatalog repo, w którym działa worker i test_cmd, np. "code", gdy projekt nie jest w korzeniu),
-        `difficulty` i `depends_on`. Zadania bez zależności idą równolegle (parallel 1 do 3).
-        Każde zadanie działa w osobnym worktree odgałęzionym od HEAD (zmiany niezacommitowane
-        są niewidoczne dla workerów), przechodzi bramkę test_cmd i dopiero wtedy jest scalane
-        do gałęzi integracyjnej orchestra/run-<id>. Zadania, których worker nie rozwiązał, wracają
-        do Ciebie (status failed) i robisz je sam.
-        integration_test_cmd: pełne testy projektu (komenda bez powłoki, pełna ścieżka do binarki spoza gita), odpalane
-        na gałęzi integracyjnej po każdym scaleniu. Gdy są czerwone, merge jest cofany, a zadanie wraca do workera z
-        wyjściem testów. Baza musi być zielona, inaczej przebieg się nie zaczyna. Pusty łańcuch wyłącza bramkę.
-        red_check (domyślnie true): test_cmd zadania musi failować przed zmianami workera, inaczej zadanie kończy się
-        red_check_failed bez ponawiania (dla refaktoryzacji ustaw expect_red=false w zadaniu).
-        review_rounds 1 do 2: po zielonych testach rola reviewer ocenia diff, uwagi wracają do workera (kosztuje
-        zużycie roli reviewer, jej agenta zmienia się w TUI). Rozmowa recenzenta z workerem jest widoczna w wierszu inbox TUI. Postęp widać w TUI obok (orch), a stan zwraca run_status.
+        Split a hard goal into small tasks, each with `id`, `description` (self-contained),
+        `files`, `acceptance`, `test_cmd` (command without a shell, e.g. "pytest -q tests/test_x.py"),
+        `cwd` (repo subdirectory where the worker and test_cmd run, e.g. "code" when the project is not at the root),
+        `difficulty` and `depends_on`. Tasks without dependencies run in parallel (parallel 1 to 3).
+        Each task runs in its own worktree branched from HEAD (uncommitted changes are invisible to workers),
+        has to pass its test_cmd gate and only then is merged into the integration branch
+        orchestra/run-<id>. Tasks the worker could not solve come back to you (status failed) and you do them.
+        integration_test_cmd: full project tests (command without a shell, full path to a binary outside git), run
+        on the integration branch after every merge. When red, the merge is reverted and the task goes back to the
+        worker with the test output. The base must be green or the run does not start. Empty string disables the gate.
+        red_check (default true): a task's test_cmd must fail before the worker's changes, otherwise the task ends
+        with red_check_failed and is not retried (for refactors set expect_red=false on the task).
+        review_rounds 1 to 2: after green tests the reviewer role judges the diff and its remarks go back to the worker
+        (uses the reviewer role's quota, its agent is changed in the TUI). The reviewer and worker conversation is
+        visible in the TUI inbox row. Progress shows in the TUI next to you (orch), run_status returns the state.
         """
         if (blocked := budget_block()) is not None:
             return blocked
         if integration_test_cmd.strip():
             missing = _missing_test_binary(integration_test_cmd, default_repo)
             if missing:
-                return {"error": "config_error", "message": f"integration_test_cmd: nie znaleziono polecenia {missing!r}"}
-        cfg.reload_overrides(default_repo)  # role i modele wybrane w TUI
+                return {"error": "config_error", "message": f"integration_test_cmd: command not found {missing!r}"}
+        cfg.reload_overrides(default_repo)  # roles and models chosen in the TUI
         plan = Plan(goal=goal, tasks=tasks)
         opts = RunOptions(parallel=parallel, escalate=False, worker=worker, model=model,
                           token_budget=token_budget, timeout_s=timeout_s, discussion_rounds=review_rounds,
@@ -128,14 +128,14 @@ def build_server(config: Config | None = None, repo: str | Path | None = None) -
         sched = Scheduler(cfg, default_repo, store, opts, reviewer=reviewer)
         runs[sched.run_id] = (sched, asyncio.create_task(sched.run(plan)))
         return {"run_id": sched.run_id, "tasks": [t.id for t in plan.tasks], "order": plan.order(),
-                "next": "wywołaj run_status(run_id, wait_s=60) aż finished=true"}
+                "next": "call run_status(run_id, wait_s=60) until finished=true"}
 
     @mcp.tool
     async def run_status(run_id: str, wait_s: float = 0) -> dict[str, Any]:
-        """Stan przebiegu run_plan. Z wait_s > 0 czeka (do 120 s) na zakończenie, potem zwraca stan.
+        """State of a run_plan run. With wait_s > 0 waits (up to 120 s) for it to finish, then returns the state.
 
-        Po zakończeniu zwraca report (wyniki zadań) i integration_branch do przeglądu:
-        `git diff <baza>...<integration_branch>`. Scalenie do głównej gałęzi robisz Ty po recenzji diffu.
+        Once finished returns the report (task outcomes) and the integration_branch to review:
+        `git diff <base>...<integration_branch>`. Merging into the main branch is your job after reviewing the diff.
         """
         entry = runs.get(run_id)
         if entry is not None and wait_s > 0:
@@ -144,7 +144,7 @@ def build_server(config: Config | None = None, repo: str | Path | None = None) -
         view = build_runs(sorted(evs, key=lambda e: e.id))
         run = view.get(run_id)
         if run is None:
-            return {"error": f"nieznany run_id: {run_id}", "known": sorted(runs)}
+            return {"error": f"unknown run_id: {run_id}", "known": sorted(runs)}
         out: dict[str, Any] = run.to_dict()
         if entry is not None and entry[1].done():
             exc = entry[1].exception()
@@ -156,20 +156,20 @@ def build_server(config: Config | None = None, repo: str | Path | None = None) -
 
     @mcp.tool
     def post_message(to_agent: str, body: str, from_agent: str = "", thread: str = "") -> int:
-        """Wysyła wiadomość do innego agenta (np. do agenta z TUI). Adresat dostaje ją jako kolejny prompt.
+        """Sends a message to another agent (e.g. one in the TUI). The recipient gets it as its next prompt.
 
-        from_agent domyślnie jest Twoją nazwą. Zwraca id wiadomości. Nazwy agentów: list_agents.
+        from_agent defaults to your name. Returns the message id. Agent names: list_agents.
         """
         return store.post_message(from_agent or me or "agent", to_agent, body, thread)
 
     @mcp.tool
     def read_inbox(agent: str = "", since_id: int = 0, thread: str | None = None) -> list[dict[str, Any]]:
-        """Czyta wiadomości adresowane do agenta (domyślnie do Ciebie), nowsze niż since_id."""
+        """Reads messages addressed to an agent (you by default) newer than since_id."""
         return [m.__dict__ for m in store.inbox(agent or me, since_id, thread)]
 
     @mcp.tool
     def list_agents() -> dict[str, Any]:
-        """Lista agentów widocznych w logu (nazwy do post_message) i nazwa Twojego agenta."""
+        """Lists agents visible in the log (names for post_message) and your own agent name."""
         names = [a for a in store.agents() if not a.startswith(("worker:", "role:", "task:", "scheduler", "inbox"))]
         return {"me": me, "agents": names}
 

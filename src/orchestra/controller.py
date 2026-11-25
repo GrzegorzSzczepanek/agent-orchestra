@@ -1,4 +1,4 @@
-"""Kontroler sesji: startuje agentów ACP (każdy w swoim worktree) i wysyła im prompty."""
+"""Session controller: starts ACP agents (each in its own worktree) and sends them prompts."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ class AgentSpec:
 
 
 def orchestra_mcp_server(agent_name: str, repo: str | Path, config_path: str | Path, db_path: str | Path) -> McpServerStdio:
-    """Serwer MCP orchestra podpinany do sesji ACP: agent dostaje post_message, read_inbox, list_agents itd."""
+    """The orchestra MCP server attached to an ACP session: the agent gets post_message, read_inbox, list_agents etc."""
     env = {"ORCHESTRA_REPO": str(repo), "ORCHESTRA_CONFIG": str(config_path), "ORCHESTRA_DB": str(db_path),
            "ORCHESTRA_AGENT": agent_name, "PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", "")}
     return McpServerStdio(name="orchestra", command=str(Path(sys.executable).parent / "orchestra-mcp"), args=[],
@@ -38,9 +38,9 @@ def orchestra_mcp_server(agent_name: str, repo: str | Path, config_path: str | P
 
 async def specs_from_config(config: Config, repo: str | Path, names: Sequence[str], *,
                             config_path: str | Path | None = None, db_path: str | Path | None = None) -> list[AgentSpec]:
-    """Dla każdego agenta z konfiguracji tworzy worktree i zwraca specyfikację sesji ACP.
+    """Creates a worktree for each configured agent and returns its ACP session spec.
 
-    Z config_path i db_path agent dostaje podpięty serwer MCP orchestra (komunikacja z innymi agentami).
+    With config_path and db_path the agent gets the orchestra MCP server attached (to talk to other agents).
     """
     specs = []
     for name in names:
@@ -63,7 +63,7 @@ class Controller:
         self._stack = AsyncExitStack()
 
     async def _handler(self, agent, tool_call, options):
-        # indirekcja: TUI może podmienić permission_handler już po utworzeniu kontrolera
+        # indirection: the TUI may replace permission_handler after the controller is created
         return await self.permission_handler(agent, tool_call, options)
 
     async def _start(self, spec: AgentSpec) -> None:
@@ -72,7 +72,7 @@ class Controller:
                                env=spec.env or None)
         try:
             self.sessions[spec.name] = await self._stack.enter_async_context(session)
-        except Exception:  # noqa: BLE001 - błąd jest już zapisany jako zdarzenie "error"
+        except Exception:  # noqa: BLE001 - the error is already recorded as an "error" event
             pass
 
     async def start_all(self) -> None:
@@ -80,7 +80,7 @@ class Controller:
             await self._start(spec)
 
     async def add_agent(self, spec: AgentSpec) -> None:
-        """Dodaje i uruchamia nowego agenta w trakcie pracy (np. z TUI)."""
+        """Adds and starts a new agent while running (e.g. from the TUI)."""
         self.specs[spec.name] = spec
         self.cwds[spec.name] = spec.cwd
         self._locks[spec.name] = asyncio.Lock()
@@ -89,7 +89,7 @@ class Controller:
     async def send(self, name: str, text: str) -> None:
         session = self.sessions.get(name)
         if session is None:
-            self.store.add_event(name, "error", {"error": "sesja nie jest uruchomiona"})
+            self.store.add_event(name, "error", {"error": "session is not running"})
             return
         async with self._locks[name]:
             try:

@@ -37,7 +37,7 @@ if "-p" in a:
     print(json.dumps({{"type": "event", "event": {{"type": "tool_running"}}}}))
     print(json.dumps({{"type": "result", "subtype": sub, "usage": {{"inputTokens": 12, "outputTokens": 3,
         "cacheReadTokens": 0, "cacheWriteTokens": 0}}, "durationMs": 5, "finalText": "ok",
-        "error": "brak kredytow" if sub == "error" else None}}))
+        "error": "out of credits" if sub == "error" else None}}))
     sys.exit(code)
 sys.exit(2)
 """
@@ -50,7 +50,7 @@ def fake_path(tmp_path: Path, monkeypatch):
     cmd = bin_dir / "cmd"
     cmd.write_text(FAKE_CMD)
     cmd.chmod(cmd.stat().st_mode | stat.S_IEXEC)
-    monkeypatch.setenv("PATH", str(bin_dir))  # nic poza fałszywym cmd: reszta agentów ma dostać SKIP
+    monkeypatch.setenv("PATH", str(bin_dir))  # nothing but the fake cmd: the other agents must get SKIP
     monkeypatch.setenv("ORCHESTRA_CMD_MODEL", "glm-5.3-flash")
     for var in ("FAKE_CMD_UNAUTH", "FAKE_CMD_ACP", "FAKE_CMD_HEADLESS_CODE"):
         monkeypatch.delenv(var, raising=False)
@@ -65,15 +65,15 @@ async def test_doctor_all_pass_with_fake_cmd(fake_path, monkeypatch):
     cfg = load_config(ROOT / "agents.toml")
     rep = await run_doctor(cfg, smoke=True, timeout=20)
     c = by_name(rep)
-    assert c["cmd: binarka"].status == PASS and "1.93.2" in c["cmd: binarka"].detail
-    assert c["cmd: logowanie"].status == PASS
-    assert c["cmd: lista modeli"].status == PASS and "105" in c["cmd: lista modeli"].detail
-    assert c["cmd: wybrany model"].status == PASS and "z-ai/glm-5.3-flash" in c["cmd: wybrany model"].detail
+    assert c["cmd: binary"].status == PASS and "1.93.2" in c["cmd: binary"].detail
+    assert c["cmd: login"].status == PASS
+    assert c["cmd: model list"].status == PASS and "105" in c["cmd: model list"].detail
+    assert c["cmd: selected model"].status == PASS and "z-ai/glm-5.3-flash" in c["cmd: selected model"].detail
     assert c["cmd: smoke test headless"].status == PASS and "12/3" in c["cmd: smoke test headless"].detail
     assert c["cmd: ACP initialize"].status == PASS
     assert c["cmd: ACP session/new"].status == PASS
-    # pozostali agenci nie są w PATH
-    assert c["codex: ACP initialize"].status == SKIP and c["antigravity: binarka"].status == SKIP
+    # the other agents are not in PATH
+    assert c["codex: ACP initialize"].status == SKIP and c["antigravity: binary"].status == SKIP
     assert rep.ok
 
 
@@ -85,11 +85,11 @@ async def test_doctor_smoke_skipped_by_default(fake_path):
 
 async def test_doctor_unauthenticated_and_bad_model(fake_path, monkeypatch):
     monkeypatch.setenv("FAKE_CMD_UNAUTH", "1")
-    monkeypatch.setenv("ORCHESTRA_CMD_MODEL", "model-ktorego-nie-ma")
+    monkeypatch.setenv("ORCHESTRA_CMD_MODEL", "model-that-does-not-exist")
     rep = await run_doctor(load_config(ROOT / "agents.toml"), timeout=20, others=False)
     c = by_name(rep)
-    assert c["cmd: logowanie"].status == FAIL and "cmd login" in c["cmd: logowanie"].hint
-    assert c["cmd: wybrany model"].status == FAIL
+    assert c["cmd: login"].status == FAIL and "cmd login" in c["cmd: login"].hint
+    assert c["cmd: selected model"].status == FAIL
     assert not rep.ok
 
 
@@ -99,7 +99,7 @@ async def test_doctor_model_not_set_is_warning(fake_path, monkeypatch):
     cfg.agents["commandcode"] = replace(cfg.agents["commandcode"], default_model="")
     rep = await run_doctor(cfg, timeout=20, others=False)
     c = by_name(rep)
-    assert c["cmd: wybrany model"].status == WARN and "ORCHESTRA_CMD_MODEL" in c["cmd: wybrany model"].hint
+    assert c["cmd: selected model"].status == WARN and "ORCHESTRA_CMD_MODEL" in c["cmd: selected model"].hint
 
 
 @pytest.mark.parametrize("code,status,needle", [(10, FAIL, "insufficient_credits"), (8, WARN, "max_turns"),
@@ -131,7 +131,7 @@ async def test_doctor_missing_cmd(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", str(tmp_path))  # pusty PATH
     rep = await run_doctor(load_config(ROOT / "agents.toml"), timeout=5)
     c = by_name(rep)
-    assert c["cmd: binarka"].status == FAIL and "npm i -g command-code" in c["cmd: binarka"].hint
+    assert c["cmd: binary"].status == FAIL and "npm i -g command-code" in c["cmd: binary"].hint
     assert c["cmd: ACP initialize"].status == SKIP
 
 
@@ -157,11 +157,11 @@ def test_cli_doctor_writes_json(fake_path, tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(ROOT)
     rc = main(["doctor", "--json", str(out), "--no-others", "--timeout", "20"])
     assert rc == 0 and out.exists()
-    assert "Podsumowanie" in capsys.readouterr().out
+    assert "Summary" in capsys.readouterr().out
 
 
 async def test_acp_child_gets_only_passthrough_env(fake_path, monkeypatch, tmp_path):
-    """SDK ACP daje agentowi okrojone środowisko: klucz cmd musi być przekazany jawnie, reszta sekretów nie."""
+    """The ACP SDK gives the agent a trimmed environment: the cmd key must be passed explicitly, other secrets must not."""
     dump = tmp_path / "dump.json"
     monkeypatch.setenv("FAKE_CMD_DUMP", str(dump))
     monkeypatch.setenv("COMMAND_CODE_API_KEY", "klucz-testowy-123456")
@@ -199,9 +199,9 @@ async def test_doctor_cmd_crash_reports_node_requirement(tmp_path, monkeypatch):
     _crashing_cmd(tmp_path, monkeypatch, "v20.19.5")
     rep = await run_doctor(load_config(ROOT / "agents.toml"), timeout=10, others=False)
     c = by_name(rep)
-    b = c["cmd: binarka"]
+    b = c["cmd: binary"]
     assert b.status == FAIL
-    assert "wymagany Node >=22, masz v20.19.5" in b.detail
+    assert "Node >=22 required, you have v20.19.5" in b.detail
     assert len(b.detail) < 200 and "import*as" not in b.detail
     assert rep.meta["cmd_version"] == ""
     assert c["cmd: ACP initialize"].status == SKIP
@@ -210,19 +210,19 @@ async def test_doctor_cmd_crash_reports_node_requirement(tmp_path, monkeypatch):
 async def test_doctor_cmd_crash_with_ok_node_shows_error_line_not_stacktrace(tmp_path, monkeypatch):
     _crashing_cmd(tmp_path, monkeypatch, "v22.23.5")
     rep = await run_doctor(load_config(ROOT / "agents.toml"), timeout=10, others=False)
-    b = by_name(rep)["cmd: binarka"]
+    b = by_name(rep)["cmd: binary"]
     assert b.status == FAIL
     assert "SyntaxError" in b.detail and "import*as" not in b.detail and len(b.detail) < 260
 
 
 async def test_doctor_cmd_crash_without_engines_and_truncated_stderr(tmp_path, monkeypatch):
-    """Realny przypadek: stary pakiet bez engines, stderr obcięty przez Node przy zamykaniu potoku."""
+    """Real case: old package without engines, stderr truncated by Node when closing the pipe."""
     _crashing_cmd(tmp_path, monkeypatch, "v20.19.5", engines="")
     pkg = tmp_path / "lib" / "command-code"
     (pkg / "package.json").write_text(json.dumps({"name": "command-code", "version": "0.52.5"}))
     cli = pkg / "dist" / "cli.mjs"
-    cli.write_text(CRASH_CLI.split("sys.stderr.write(\"SyntaxError")[0])  # bez linii błędu
+    cli.write_text(CRASH_CLI.split("sys.stderr.write(\"SyntaxError")[0])  # without the error line
     rep = await run_doctor(load_config(ROOT / "agents.toml"), timeout=10, others=False)
-    b = by_name(rep)["cmd: binarka"]
+    b = by_name(rep)["cmd: binary"]
     assert b.status == FAIL and "Node v20.19.5" in b.detail and "import*as" not in b.detail
     assert "Node >=22" in b.hint

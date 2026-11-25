@@ -1,38 +1,38 @@
-"""Raport rejestru delegacji: tabela i proponowany próg opłacalności (czyste funkcje, bez I/O)."""
+"""Delegation ledger report: table and a proposed break-even threshold (pure functions, no I/O)."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-MIN_ROWS = 10  # tyle delegacji potrzeba, żeby próg nie był tylko wstępny
+MIN_ROWS = 10  # this many delegations are needed for the threshold to be more than preliminary
 
 
 @dataclass(frozen=True)
 class LedgerRow:
     task_id: str
-    outcome: str  # accepted (bez poprawek) | fixed (z poprawkami) | rejected (odrzucone, zrobione samemu)
+    outcome: str  # accepted (no fixes) | fixed (with fixes) | rejected (thrown away, done by hand)
     worker_tokens_in: int
     worker_tokens_out: int
     worker_usd: float
-    spec_tokens: int  # szacunek: tokeny, które mocny model poświęcił na opis i testy zadania
-    review_tokens: int  # szacunek: tokeny, które mocny model poświęcił na recenzję diffu
-    diff_tokens: int  # rozmiar diffu workera, przybliżenie kosztu napisania samemu
+    spec_tokens: int  # estimate: tokens the strong model spent on the task description and tests
+    review_tokens: int  # estimate: tokens the strong model spent reviewing the diff
+    diff_tokens: int  # size of the worker's diff, an approximation of the cost of writing it yourself
 
 
 @dataclass(frozen=True)
 class ThresholdProposal:
     n: int
-    acceptance_rate: float | None  # średnia z wag: accepted 1.0, fixed 0.5, rejected 0.0
-    mean_overhead: float | None  # średnia z spec_tokens + review_tokens
-    threshold_tokens: int | None  # delegować, gdy szacowany diff przekracza tyle tokenów
+    acceptance_rate: float | None  # weighted mean: accepted 1.0, fixed 0.5, rejected 0.0
+    mean_overhead: float | None  # mean of spec_tokens + review_tokens
+    threshold_tokens: int | None  # delegate when the estimated diff exceeds this many tokens
     text: str
 
 
 def format_table(rows: list[LedgerRow]) -> str:
-    """Tabela tekstowa delegacji z wierszem sumy. Szczegóły zachowania opisuje tests/test_ledger_report.py."""
+    """Text table of delegations with a totals row. Behaviour is specified in tests/test_ledger_report.py."""
     raise NotImplementedError
 
 
 def proposed_threshold(rows: list[LedgerRow]) -> ThresholdProposal:
-    """Próg opłacalności: średni narzut (opis + recenzja) podzielony przez wskaźnik akceptacji."""
+    """Break-even threshold: mean overhead (spec + review) divided by the acceptance rate."""
     raise NotImplementedError

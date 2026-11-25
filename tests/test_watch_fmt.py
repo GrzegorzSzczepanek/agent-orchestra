@@ -13,7 +13,7 @@ def ev(kind, payload, *, agent="scheduler", tokens_in=0, tokens_out=0):
 
 def test_run_start():
     line = fmt_event(ev("run_start", {"run_id": "r1", "tasks": 3, "parallel": 2}))
-    assert line.plain == f"{CLOCK} ▶ run r1: 3 zadań, równolegle 2"
+    assert line.plain == f"{CLOCK} ▶ run r1: 3 tasks, parallel 2"
     assert line.style == "bold cyan"
 
 
@@ -39,7 +39,7 @@ def test_worker_step_markers_and_styles():
 
 def test_worker_end_ok_and_fail():
     ok = fmt_event(ev("worker_end", {"attempt": 2, "status": "ok"}, agent="task:a"))
-    assert ok.plain == f"{CLOCK} ■ próba 2: ok" and ok.style == "green"
+    assert ok.plain == f"{CLOCK} ■ attempt 2: ok" and ok.style == "green"
     bad = fmt_event(ev("worker_end", {"attempt": 1, "status": "tests_failed"}, agent="task:a"))
     assert "tests_failed" in bad.plain and bad.style == "red"
 
@@ -56,14 +56,14 @@ def test_message_body_truncated_to_400():
 
 
 def test_hint_applied():
-    line = fmt_event(ev("hint_applied", {"task_id": "b", "text": "sprawdź import"}))
-    assert line.plain == f"{CLOCK} ✎ wskazówka dla b: sprawdź import"
+    line = fmt_event(ev("hint_applied", {"task_id": "b", "text": "check the import"}))
+    assert line.plain == f"{CLOCK} ✎ hint for b: check the import"
     assert line.style == "bold magenta"
 
 
 def test_run_cancel():
     line = fmt_event(ev("run_cancel", {"by": "tui"}))
-    assert line.plain == f"{CLOCK} ✗ przebieg anulowany (tui)"
+    assert line.plain == f"{CLOCK} ✗ run cancelled (tui)"
     assert line.style == "bold red"
 
 

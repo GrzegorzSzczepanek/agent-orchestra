@@ -68,7 +68,7 @@ WORKER = (
 
 
 def tdict(tid, deps=()):
-    return {"id": tid, "description": f"zrób {tid}", "files": [f"{tid}.py"], "acceptance": [f"{tid} działa"],
+    return {"id": tid, "description": f"do {tid}", "files": [f"{tid}.py"], "acceptance": [f"{tid} works"],
             "test_cmd": f"{sys.executable} -m pytest -q test_{tid}.py", "depends_on": list(deps)}
 
 
@@ -79,7 +79,7 @@ async def test_mcp_run_plan_and_status(git_repo: Path, tmp_path: Path):
                  roles={"implementer": "cheap"})
     server = build_server(config=cfg, repo=git_repo)
     async with Client(server) as client:
-        started = (await client.call_tool("run_plan", {"goal": "dwa pliki", "tasks": [tdict("a"), tdict("b", ["a"])]})).data
+        started = (await client.call_tool("run_plan", {"goal": "two files", "tasks": [tdict("a"), tdict("b", ["a"])]})).data
         assert started["order"] == ["a", "b"]
         status = (await client.call_tool("run_status", {"run_id": started["run_id"], "wait_s": 60})).data
     assert status["finished"] and status["ok"], status
@@ -94,13 +94,13 @@ async def test_mcp_run_plan_rejects_cycle(git_repo: Path):
         try:
             await client.call_tool("run_plan", {"goal": "x", "tasks": [tdict("a", ["b"]), tdict("b", ["a"])]})
         except Exception as exc:  # noqa: BLE001
-            assert "cykl" in str(exc)
+            assert "cycle" in str(exc)
         else:
-            raise AssertionError("cykl powinien zostać odrzucony")
+            raise AssertionError("a cycle should be rejected")
 
 
 def seed(store: EventStore) -> None:
-    store.add_event("scheduler", "run_start", {"run_id": "r1", "goal": "cel", "tasks": 2, "parallel": 2,
+    store.add_event("scheduler", "run_start", {"run_id": "r1", "goal": "goal", "tasks": 2, "parallel": 2,
                     "integration_branch": "orchestra/run-r1",
                     "plan": [{"id": "a", "difficulty": "easy", "depends_on": [], "description": "A"},
                              {"id": "b", "difficulty": "hard", "depends_on": ["a"], "description": "B"}]})
@@ -140,7 +140,7 @@ async def test_watch_app_renders_run():
         assert "run r1" in str(app._head.render())
 
 
-# --- podgląd na żywo, cwd, wskazówki i anulowanie ---
+# --- live view, cwd, hints and cancellation ---
 import asyncio
 import json
 import subprocess
@@ -162,10 +162,10 @@ def test_summarize_frame_real_shapes():
         ("tool", "write_file: /x/a.py")
     assert summarize_frame(frame(type="tool_completed", toolName="x", result=[{"type": "text", "text": "(no output)"}])) == \
         ("result", "(no output)")
-    assert summarize_frame(frame(type="message_end", content=[{"type": "text", "text": "gotowe"}])) == ("text", "gotowe")
+    assert summarize_frame(frame(type="message_end", content=[{"type": "text", "text": "done"}])) == ("text", "done")
     assert summarize_frame(frame(type="thinking_end", text="hmm")) == ("think", "hmm")
     assert summarize_frame(frame(type="thinking_delta", delta="x")) is None
-    assert summarize_frame("nie json") is None and summarize_frame('{"type":"result"}') is None
+    assert summarize_frame("not json") is None and summarize_frame('{"type":"result"}') is None
 
 
 def _commit_dir(repo: Path, sub: str) -> None:
@@ -182,7 +182,7 @@ async def test_delegate_cwd_runs_worker_and_tests_in_subdir(git_repo: Path):
     res = await delegate(cfg, git_repo, "x", worker="fake", fake_files=files, cwd="code",
                          test_cmd=f"{sys.executable} -m pytest -q test_m.py", keep_worktree=False)
     assert res.status == "ok", res
-    bad = await delegate(cfg, git_repo, "x", worker="fake", cwd="nie-ma", keep_worktree=False)
+    bad = await delegate(cfg, git_repo, "x", worker="fake", cwd="missing", keep_worktree=False)
     assert bad.status == "worker_failed" and "cwd" in bad.error
 
 
@@ -223,12 +223,12 @@ async def test_scheduler_logs_live_steps_and_attempt_details(git_repo: Path, tmp
 
 async def test_failed_attempt_logs_reason(git_repo: Path, tmp_path: Path):
     store = EventStore(":memory:")
-    plan = one_task(test="test_nie_ma.py")
+    plan = one_task(test="test_missing.py")
     await Scheduler(streaming_cfg(tmp_path), git_repo, store, RunOptions(escalate=False, max_failures=1)).run(plan)
     att = store.events(kind="task_attempt")[0].payload
-    assert att["status"] == "tests_failed" and "test_nie_ma.py" in att["test_output"]
+    assert att["status"] == "tests_failed" and "test_missing.py" in att["test_output"]
     line = fmt_event(store.events(kind="task_attempt")[0])
-    assert "test_nie_ma.py" in line.plain and "/detail a" in line.plain
+    assert "test_missing.py" in line.plain and "/detail a" in line.plain
 
 
 async def test_hint_reaches_next_attempt_prompt(git_repo: Path, tmp_path: Path):
@@ -241,9 +241,9 @@ async def test_hint_reaches_next_attempt_prompt(git_repo: Path, tmp_path: Path):
 
     sched = Scheduler(Config(agents={}, roles={"implementer": "cheap"}), git_repo, store,
                       RunOptions(escalate=False, max_failures=1), executor=ex)
-    store.post_message("tui", f"task:{sched.run_id}:a", "użyj funkcji foo")
+    store.post_message("tui", f"task:{sched.run_id}:a", "use the foo function")
     await sched.run(one_task())
-    assert "użyj funkcji foo" in prompts[0]
+    assert "use the foo function" in prompts[0]
     assert store.events(kind="hint_applied")
 
 
@@ -267,21 +267,21 @@ async def test_cancel_kills_running_task(git_repo: Path):
 
 async def test_tui_commands(git_repo: Path):
     store = EventStore(":memory:")
-    seed(store)  # run r1, zadania a (done) i b (pending)
+    seed(store)  # run r1, tasks a (done) and b (pending)
     store.add_event("worker:cheap", "task_attempt",
                     {"run_id": "r1", "task_id": "b", "attempt": 1, "status": "tests_failed", "test_cmd": "pytest x",
                      "cwd": "code", "error": "", "test_output": "E assert 1 == 2", "files": ["b.py"]})
-    app = WatchApp  # noqa: F841 - tylko import
+    app = WatchApp  # noqa: F841 - import only
     from orchestra.tui import OrchestraApp
 
     tui = OrchestraApp(store, poll_s=0.05)
     async with tui.run_test(size=(140, 40)) as pilot:
         await pilot.pause(0.2)
-        tui.run_command("/hint b sprawdź import")
+        tui.run_command("/hint b check the import")
         tui.run_command("/detail b")
         tui._do_cancel("r1")
         await pilot.pause(0.1)
-        assert store.inbox("task:r1:b")[0].body == "sprawdź import"
+        assert store.inbox("task:r1:b")[0].body == "check the import"
         assert store.inbox("run:r1")[0].body == "cancel"
         assert "E assert 1 == 2" in "\n".join(l.text for l in tui._log.lines)
 
