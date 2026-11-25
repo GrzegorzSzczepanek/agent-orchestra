@@ -6,17 +6,19 @@ import argparse
 import asyncio
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from acp.schema import PermissionOption, ToolCallUpdate
 from rich.syntax import Syntax
-from textual import on
+from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Button, DataTable, Footer, Header, Input, Label, RichLog, Select, Static
+from textual.widgets import Button, DataTable, Footer, Header, Input, Label, RichLog, Select, Static, TextArea
 
 from .config import ROLE_NAMES, Config, save_overrides
 from .controller import AgentSpec, Controller, orchestra_mcp_server
@@ -37,6 +39,56 @@ BUTTONS = (("b-new", "＋ Agent"), ("b-plan", "▶ Plan"), ("b-msg", "✉ Msg"),
            ("b-detail", "🔎 Info"), ("b-cancel", "⛔ Cancel"), ("b-diff", "± Diff"), ("b-roles", "⚙ Roles"))
 STATUS_ICON = {"done": "✓ done", "idle": "○ idle", "working": "● working", "waiting": "? waiting", "error": "✗ error",
                "stopped": "· stopped", "": "·"}
+
+
+class PromptArea(TextArea):
+    """Multi-line prompt: Enter submits, Ctrl+J or Shift+Enter adds a line, Tab moves focus."""
+
+    DEFAULT_CSS = """
+    PromptArea {
+        height: auto;
+        min-height: 3;
+        max-height: 10;
+    }
+    """
+
+    @dataclass
+    class Submitted(Message):
+        """Posted when the user presses Enter in the prompt."""
+
+        value: str
+        prompt: "PromptArea"
+
+        @property
+        def control(self) -> "PromptArea":
+            return self.prompt
+
+    def __init__(self, text: str = "", *, placeholder: str = "", id: str | None = None,
+                 classes: str | None = None) -> None:
+        super().__init__(text, soft_wrap=True, tab_behavior="focus", show_line_numbers=False,
+                         highlight_cursor_line=False, placeholder=placeholder, id=id, classes=classes)
+
+    @property
+    def value(self) -> str:
+        return self.text
+
+    @value.setter
+    def value(self, value: str) -> None:
+        self.load_text(value)
+        self.move_cursor((0, 0))
+
+    async def _on_key(self, event: events.Key) -> None:
+        if event.key == "enter":
+            event.stop()
+            event.prevent_default()
+            self.post_message(self.Submitted(self.value, self))
+            return
+        if event.key in ("ctrl+j", "shift+enter"):
+            event.stop()
+            event.prevent_default()
+            self._replace_via_keyboard("\n", *self.selection)
+            return
+        await super()._on_key(event)
 
 
 class PermissionScreen(ModalScreen[str | None]):
@@ -125,12 +177,12 @@ class TaskActionScreen(ModalScreen[tuple[str, str] | None]):
             yield Select([(t, t) for t in self.tasks], value=self.preselect if self.preselect in self.tasks else self.tasks[0],
                          allow_blank=False, id="act-task")
             if self.with_text:
-                yield Input(placeholder="text, e.g. use the foo function from utils.py", id="act-text")
+                yield PromptArea(placeholder="text, e.g. use the foo function from utils.py", id="act-text")
             yield Button(self.button, id="act-ok", variant="success")
             yield Button("Cancel", id="act-cancel")
 
     def _submit(self) -> None:
-        text = self.query_one("#act-text", Input).value.strip() if self.with_text else ""
+        text = self.query_one("#act-text", PromptArea).value.strip() if self.with_text else ""
         if self.with_text and not text:
             self.notify("Enter some text", severity="warning")
             return
@@ -140,7 +192,7 @@ class TaskActionScreen(ModalScreen[tuple[str, str] | None]):
     def ok(self) -> None:
         self._submit()
 
-    @on(Input.Submitted)
+    @on(PromptArea.Submitted)
     def submitted(self) -> None:
         self._submit()
 
@@ -171,12 +223,12 @@ class MessageScreen(ModalScreen[tuple[str, str] | None]):
             yield Label("Message to an agent (it gets it as a prompt and may reply with post_message)")
             yield Select([(t, t) for t in self.targets], value=self.preselect if self.preselect in self.targets else self.targets[0],
                          allow_blank=False, id="msg-to")
-            yield Input(placeholder="message text", id="msg-text")
+            yield PromptArea(placeholder="message text", id="msg-text")
             yield Button("Send", id="msg-ok", variant="success")
             yield Button("Cancel", id="msg-cancel")
 
     def _submit(self) -> None:
-        text = self.query_one("#msg-text", Input).value.strip()
+        text = self.query_one("#msg-text", PromptArea).value.strip()
         if not text:
             self.notify("Enter some text", severity="warning")
             return
@@ -186,7 +238,7 @@ class MessageScreen(ModalScreen[tuple[str, str] | None]):
     def ok(self) -> None:
         self._submit()
 
-    @on(Input.Submitted)
+    @on(PromptArea.Submitted)
     def submitted(self) -> None:
         self._submit()
 
@@ -295,7 +347,7 @@ class PlanScreen(ModalScreen[tuple[str, str] | None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="plan-box"):
             yield Label(f"Goal: the planner ({self.planner}) splits it into tasks")
-            yield Input(placeholder="e.g. add e-mail validation with tests", id="plan-goal")
+            yield PromptArea(placeholder="e.g. add e-mail validation with tests", id="plan-goal")
             yield Button("Plan and run", id="plan-goal-ok", variant="success")
             yield Label("Or your own split: a JSON plan file (template: init-plan)")
             yield Input(value=self.default_file, placeholder="path to plan.json", id="plan-file")
@@ -304,7 +356,7 @@ class PlanScreen(ModalScreen[tuple[str, str] | None]):
 
     @on(Button.Pressed, "#plan-goal-ok")
     def goal_ok(self) -> None:
-        goal = self.query_one("#plan-goal", Input).value.strip()
+        goal = self.query_one("#plan-goal", PromptArea).value.strip()
         if goal:
             self.dismiss(("goal", goal))
         else:
@@ -318,7 +370,7 @@ class PlanScreen(ModalScreen[tuple[str, str] | None]):
         else:
             self.notify("Enter a file path", severity="warning")
 
-    @on(Input.Submitted, "#plan-goal")
+    @on(PromptArea.Submitted, "#plan-goal")
     def goal_submitted(self) -> None:
         self.goal_ok()
 
@@ -390,7 +442,7 @@ class OrchestraApp(App[None]):
                 yield RichLog(id="log", wrap=True, min_width=20, highlight=False, markup=False)
                 yield RichLog(id="diff", wrap=False, highlight=False, markup=False)
                 yield Static("", id="hint")
-                yield Input(placeholder="Select an agent or a task on the left", id="prompt")
+                yield PromptArea(placeholder="Select an agent or a task on the left (Ctrl+J new line)", id="prompt")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -399,7 +451,7 @@ class OrchestraApp(App[None]):
         self._log = self.query_one("#log", RichLog)
         self._diff = self.query_one("#diff", RichLog)
         self._hint = self.query_one("#hint", Static)
-        self._prompt = self.query_one("#prompt", Input)
+        self._prompt = self.query_one("#prompt", PromptArea)
         self._rolebar = self.query_one("#rolebar", Static)
         self._jobs: set[asyncio.Task] = set()
         # Tab goes from the table straight to the prompt (scroll logs with the mouse, use buttons or F keys)
@@ -550,10 +602,10 @@ class OrchestraApp(App[None]):
             self.select_agent(name)
 
     # --- prompt ---
-    @on(Input.Submitted, "#prompt")
-    def submit_prompt(self, event: Input.Submitted) -> None:
+    @on(PromptArea.Submitted, "#prompt")
+    def submit_prompt(self, event: PromptArea.Submitted) -> None:
         text = event.value.strip()
-        event.input.value = ""
+        event.prompt.value = ""
         if text.startswith("/"):
             self.run_command(text)
             return

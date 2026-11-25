@@ -8,7 +8,7 @@ from textual.widgets import Button, DataTable, Input, RichLog
 from orchestra.controller import AgentSpec, Controller
 from orchestra.render import render_events
 from orchestra.store import EventStore
-from orchestra.tui import OrchestraApp, PermissionScreen
+from orchestra.tui import OrchestraApp, PermissionScreen, PromptArea
 
 MOCK = [sys.executable, "-m", "orchestra.testing.mock_agent"]
 
@@ -75,7 +75,7 @@ async def test_prompt_roundtrip_with_mock_agents(store: EventStore, tmp_path: Pa
     async with app.run_test(size=(120, 36)) as pilot:
         await wait_for(pilot, lambda: len(app.controller.sessions) == 2)
         await wait_for(pilot, lambda: app.selected == "alpha")
-        app.query_one("#prompt", Input).focus()
+        app.query_one("#prompt", PromptArea).focus()
         await pilot.press(*"hej", "enter")
         await wait_for(pilot, lambda: "echo: hej" in log_text(app))
         t = app.query_one("#agents", DataTable)
@@ -92,8 +92,8 @@ async def test_prompt_without_selection_uses_first_agent(store: EventStore, tmp_
     async with app.run_test(size=(120, 36)) as pilot:
         await wait_for(pilot, lambda: len(app.controller.sessions) == 1)
         app.selected = ""
-        app.query_one("#prompt", Input).value = "hej"
-        app.query_one("#prompt", Input).focus()
+        app.query_one("#prompt", PromptArea).value = "hej"
+        app.query_one("#prompt", PromptArea).focus()
         await pilot.press("enter")
         assert app.selected == "alpha"
         await wait_for(pilot, lambda: "echo: hej" in log_text(app))
@@ -105,8 +105,8 @@ async def test_permission_modal_allows_write(store: EventStore, tmp_path: Path):
     app = OrchestraApp(store, Controller(store, [AgentSpec("alpha", MOCK, str(d))]), poll_s=0.05)
     async with app.run_test(size=(120, 36)) as pilot:
         await wait_for(pilot, lambda: "alpha" in app.controller.sessions)
-        app.query_one("#prompt", Input).focus()
-        app.query_one("#prompt", Input).value = "write:a.txt:content"
+        app.query_one("#prompt", PromptArea).focus()
+        app.query_one("#prompt", PromptArea).value = "write:a.txt:content"
         await pilot.press("enter")
         await wait_for(pilot, lambda: isinstance(app.screen, PermissionScreen))
         assert "Write a.txt" in str(app.screen.query_one("#perm-title").render())
@@ -121,8 +121,8 @@ async def test_permission_modal_deny(store: EventStore, tmp_path: Path):
     app = OrchestraApp(store, Controller(store, [AgentSpec("alpha", MOCK, str(d))]), poll_s=0.05)
     async with app.run_test(size=(120, 36)) as pilot:
         await wait_for(pilot, lambda: "alpha" in app.controller.sessions)
-        app.query_one("#prompt", Input).value = "write:b.txt:x"
-        app.query_one("#prompt", Input).focus()
+        app.query_one("#prompt", PromptArea).value = "write:b.txt:x"
+        app.query_one("#prompt", PromptArea).focus()
         await pilot.press("enter")
         await wait_for(pilot, lambda: isinstance(app.screen, PermissionScreen))
         await pilot.press("escape")
@@ -151,7 +151,7 @@ async def test_single_tab_from_table_reaches_prompt(store: EventStore):
         await pilot.pause(0.2)
         assert isinstance(app.focused, DataTable)
         await pilot.press("tab")
-        assert isinstance(app.focused, Input)
+        assert isinstance(app.focused, PromptArea)
 
 
 async def test_new_agent_from_tui(store: EventStore, git_repo: Path):
@@ -176,8 +176,8 @@ async def test_new_agent_from_tui(store: EventStore, git_repo: Path):
         await wait_for(pilot, lambda: "mock" in ctrl.sessions)
         # prompt to a manually added agent
         app.select_agent("api")
-        app.query_one("#prompt", Input).focus()
-        app.query_one("#prompt", Input).value = "write something"
+        app.query_one("#prompt", PromptArea).focus()
+        app.query_one("#prompt", PromptArea).value = "write something"
         await pilot.press("enter")
         await wait_for(pilot, lambda: "write something" in log_text(app))
 
@@ -257,7 +257,7 @@ async def test_message_button_reaches_live_agent_and_agents_talk(store: EventSto
         await pilot.pause(0.2)
         assert isinstance(app.screen, MessageScreen)
         assert app.screen.query_one("#msg-to", Select).value == "beta"
-        app.screen.query_one("#msg-text", Input).value = "hello"
+        app.screen.query_one("#msg-text", PromptArea).value = "hello"
         await pilot.click("#msg-ok")
         await wait_for(pilot, lambda: "Message from user: hello" in log_text(app))
         # agent -> agent (how the post_message MCP tool works): the recipient gets it as a prompt
