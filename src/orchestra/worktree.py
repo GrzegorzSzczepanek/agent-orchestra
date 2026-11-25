@@ -131,6 +131,29 @@ async def create_worktree(repo: str | Path, name: str = "task", base: str = "HEA
     return Worktree(path=path, branch=branch, base=base_sha)
 
 
+def _is_test_byproduct(path: str) -> bool:
+    """Python bytecode written by running the tests: *.pyc files and anything inside __pycache__."""
+    return path.endswith(".pyc") or "__pycache__" in path.split("/")[:-1]
+
+
+async def remove_byproducts(workdir: str | Path) -> None:
+    """Delete untracked Python bytecode under workdir so it never reaches the diff or the worker's commit.
+
+    Tests write it into the worktree when the repository does not ignore it. Tracked files are untouched,
+    and paths the repository already ignores are skipped because git add -A would skip them anyway.
+    """
+    workdir = Path(workdir)
+    out = await git(["ls-files", "--others", "--exclude-standard", "-z"], workdir)
+    targets = [workdir / rel for rel in out.split("\0") if rel and _is_test_byproduct(rel)]
+    for target in targets:
+        target.unlink(missing_ok=True)
+    for directory in sorted({t.parent for t in targets}, key=lambda p: len(p.parts), reverse=True):
+        while (directory != workdir and directory.name == "__pycache__"
+               and directory.is_dir() and not any(directory.iterdir())):
+            directory.rmdir()
+            directory = directory.parent
+
+
 async def diff(wt: Worktree) -> str:
     """Full diff against the base, including new files (stage -A in the worktree)."""
     await git(["add", "-A"], wt.path)
@@ -144,5 +167,6 @@ async def remove_worktree(repo: str | Path, wt: Worktree) -> None:
 
 async def view_diff(path: str | Path) -> str:
     """Diff of uncommitted changes in the worktree against HEAD (new files via intent-to-add)."""
+    await remove_byproducts(path)
     await git(["add", "-N", "."], path)
     return await git(["diff", "--no-color", "HEAD"], path)
