@@ -143,7 +143,7 @@ def test_detect_client_prefers_order_and_falls_back_to_none(monkeypatch, tmp_pat
 
 def test_skill_text_strips_frontmatter():
     text = skill_text(ROOT / ".agents" / "skills" / "orchestrate-hard-task" / "SKILL.md")
-    assert text.startswith("# Rozbijanie") and "name:" not in text.splitlines()[0]
+    assert text.startswith("# Splitting a hard task") and "name:" not in text.splitlines()[0]
 
 
 def test_build_launch_per_client(tmp_path):
