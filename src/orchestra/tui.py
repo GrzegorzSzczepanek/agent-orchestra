@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -176,12 +177,12 @@ class TaskActionScreen(ModalScreen[tuple[str, str] | None]):
             yield Select([(t, t) for t in self.tasks], value=self.preselect if self.preselect in self.tasks else self.tasks[0],
                          allow_blank=False, id="act-task")
             if self.with_text:
-                yield Input(placeholder="text, e.g. use the foo function from utils.py", id="act-text")
+                yield PromptArea(placeholder="text, e.g. use the foo function from utils.py", id="act-text")
             yield Button(self.button, id="act-ok", variant="success")
             yield Button("Cancel", id="act-cancel")
 
     def _submit(self) -> None:
-        text = self.query_one("#act-text", Input).value.strip() if self.with_text else ""
+        text = self.query_one("#act-text", PromptArea).value.strip() if self.with_text else ""
         if self.with_text and not text:
             self.notify("Enter some text", severity="warning")
             return
@@ -191,7 +192,7 @@ class TaskActionScreen(ModalScreen[tuple[str, str] | None]):
     def ok(self) -> None:
         self._submit()
 
-    @on(Input.Submitted)
+    @on(PromptArea.Submitted)
     def submitted(self) -> None:
         self._submit()
 
@@ -222,12 +223,12 @@ class MessageScreen(ModalScreen[tuple[str, str] | None]):
             yield Label("Message to an agent (it gets it as a prompt and may reply with post_message)")
             yield Select([(t, t) for t in self.targets], value=self.preselect if self.preselect in self.targets else self.targets[0],
                          allow_blank=False, id="msg-to")
-            yield Input(placeholder="message text", id="msg-text")
+            yield PromptArea(placeholder="message text", id="msg-text")
             yield Button("Send", id="msg-ok", variant="success")
             yield Button("Cancel", id="msg-cancel")
 
     def _submit(self) -> None:
-        text = self.query_one("#msg-text", Input).value.strip()
+        text = self.query_one("#msg-text", PromptArea).value.strip()
         if not text:
             self.notify("Enter some text", severity="warning")
             return
@@ -237,7 +238,7 @@ class MessageScreen(ModalScreen[tuple[str, str] | None]):
     def ok(self) -> None:
         self._submit()
 
-    @on(Input.Submitted)
+    @on(PromptArea.Submitted)
     def submitted(self) -> None:
         self._submit()
 
@@ -346,7 +347,7 @@ class PlanScreen(ModalScreen[tuple[str, str] | None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="plan-box"):
             yield Label(f"Goal: the planner ({self.planner}) splits it into tasks")
-            yield Input(placeholder="e.g. add e-mail validation with tests", id="plan-goal")
+            yield PromptArea(placeholder="e.g. add e-mail validation with tests", id="plan-goal")
             yield Button("Plan and run", id="plan-goal-ok", variant="success")
             yield Label("Or your own split: a JSON plan file (template: init-plan)")
             yield Input(value=self.default_file, placeholder="path to plan.json", id="plan-file")
@@ -355,7 +356,7 @@ class PlanScreen(ModalScreen[tuple[str, str] | None]):
 
     @on(Button.Pressed, "#plan-goal-ok")
     def goal_ok(self) -> None:
-        goal = self.query_one("#plan-goal", Input).value.strip()
+        goal = self.query_one("#plan-goal", PromptArea).value.strip()
         if goal:
             self.dismiss(("goal", goal))
         else:
@@ -369,7 +370,7 @@ class PlanScreen(ModalScreen[tuple[str, str] | None]):
         else:
             self.notify("Enter a file path", severity="warning")
 
-    @on(Input.Submitted, "#plan-goal")
+    @on(PromptArea.Submitted, "#plan-goal")
     def goal_submitted(self) -> None:
         self.goal_ok()
 
