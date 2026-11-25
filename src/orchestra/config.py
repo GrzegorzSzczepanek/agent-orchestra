@@ -27,6 +27,9 @@ class AgentConfig:
     # Zmienne środowiskowe przekazywane agentowi uruchamianemu po ACP. SDK ACP startuje proces z okrojonym
     # środowiskiem (HOME, PATH itp.), więc np. COMMAND_CODE_API_KEY trzeba przekazać jawnie.
     env_passthrough: tuple[str, ...] = ()
+    # Cena za 1M tokenów w USD, do szacowania kosztu agentów, które go nie raportują (np. cmd). 0 oznacza nieznana.
+    price_in_per_mtok: float = 0.0
+    price_out_per_mtok: float = 0.0
 
     def binary(self) -> str:
         """Pierwszy element komendy headless (a gdy jej brak, ACP): to, co musi być w PATH."""
@@ -91,6 +94,8 @@ class Config:
     roles: dict[str, str] = field(default_factory=dict)
     # kolejność prób, gdy agent roli nie jest zainstalowany (potem reszta agentów w kolejności z pliku)
     fallback_order: tuple[str, ...] = ()
+    # zmienne środowiskowe przekazywane do test_cmd i integration_test_cmd poza bezpiecznym zestawem
+    test_env_passthrough: tuple[str, ...] = ()
     role_overrides: dict[str, str] = field(default_factory=dict)  # wybór użytkownika, np. z TUI
     model_overrides: dict[str, str] = field(default_factory=dict)  # agent -> model, np. z TUI
     _base_agents: dict[str, AgentConfig] | None = field(default=None, repr=False, compare=False)
@@ -180,8 +185,9 @@ def user_config_paths(repo: str | Path | None = None) -> list[Path]:
 def _merge(base: dict, extra: dict) -> dict:
     out = {**base, "agents": {**base.get("agents", {}), **extra.get("agents", {})},
            "roles": {**base.get("roles", {}), **extra.get("roles", {})}}
-    if "fallback_order" in extra:
-        out["fallback_order"] = extra["fallback_order"]
+    for key in ("fallback_order", "test_env_passthrough"):
+        if key in extra:
+            out[key] = extra[key]
     return out
 
 
@@ -201,6 +207,8 @@ def load_config(path: str | Path = "agents.toml", repo: str | Path | None = None
             model_env=raw.get("model_env", ""),
             require_model=bool(raw.get("require_model", False)),
             env_passthrough=tuple(raw.get("env_passthrough", ())),
+            price_in_per_mtok=float(raw.get("price_in_per_mtok", 0.0)),
+            price_out_per_mtok=float(raw.get("price_out_per_mtok", 0.0)),
         )
         for name, raw in data.get("agents", {}).items()
     }
@@ -208,7 +216,8 @@ def load_config(path: str | Path = "agents.toml", repo: str | Path | None = None
     for role, agent in roles.items():
         if agent not in agents:
             raise ValueError(f"Rola {role} wskazuje nieznanego agenta {agent}")
-    cfg = Config(agents=agents, roles=roles, fallback_order=tuple(data.get("fallback_order", ())))
+    cfg = Config(agents=agents, roles=roles, fallback_order=tuple(data.get("fallback_order", ())),
+                 test_env_passthrough=tuple(data.get("test_env_passthrough", ())))
     if repo is not None:
         cfg.reload_overrides(repo)
     return cfg

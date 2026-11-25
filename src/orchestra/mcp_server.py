@@ -10,7 +10,8 @@ from typing import Any
 from fastmcp import FastMCP
 
 from .config import Config, load_config
-from .delegate import delegate as run_delegate
+from .delegate import _missing_test_binary, delegate as run_delegate
+from .ledger import budget_state
 from .plan import Plan, PlanTask
 from .agents_io import headless_ask, make_reviewer
 from .progress import build_runs
@@ -27,6 +28,14 @@ def build_server(config: Config | None = None, repo: str | Path | None = None) -
     store = EventStore(os.environ.get("ORCHESTRA_DB", default_repo / ".orchestra" / "events.db"))
     me = os.environ.get("ORCHESTRA_AGENT", "")  # nazwa agenta, któremu serwer jest podpięty (ustawia TUI)
 
+    def budget_block() -> dict[str, Any] | None:
+        """Gdy budżet sesji workerów jest przekroczony, narzędzia zwracają błąd zamiast uruchamiać workery."""
+        bs = budget_state(default_repo, store, cfg)
+        if bs is not None and bs.exceeded:
+            return {"error": "session_budget_exceeded", "message": bs.message(), "spent_usd": round(bs.spent_usd, 4),
+                    "limit_usd": bs.limit_usd}
+        return None
+
     @mcp.tool
     async def delegate(
         prompt: str,
@@ -37,13 +46,17 @@ def build_server(config: Config | None = None, repo: str | Path | None = None) -
         timeout_s: float = 900,
         keep_worktree: bool = True,
         fake_files: dict[str, str] | None = None,
+        red_check: bool = False,
     ) -> dict[str, Any]:
         """Deleguje proste zadanie implementacyjne tańszemu workerowi w osobnym git worktree.
 
         Zwraca status, diff względem bazy, wynik komendy testowej i zużycie tokenów.
         test_cmd jest uruchamiane bez powłoki (shlex), np. "pytest -q tests/test_x.py".
         worker "fake" służy do testów i zapisuje pliki z fake_files.
+        red_check=true: test_cmd musi failować przed zmianami workera (inaczej status red_check_failed).
         """
+        if (blocked := budget_block()) is not None:
+            return blocked
         cfg.reload_overrides(default_repo)  # role i modele wybrane w TUI
         result = await run_delegate(
             cfg,
@@ -56,6 +69,7 @@ def build_server(config: Config | None = None, repo: str | Path | None = None) -
             timeout_s=timeout_s,
             keep_worktree=keep_worktree,
             fake_files=fake_files,
+            red_check=red_check,
         )
         usage = result.usage or {}
         store.add_event(f"worker:{result.worker or worker}", "delegate",
@@ -77,6 +91,8 @@ def build_server(config: Config | None = None, repo: str | Path | None = None) -
         token_budget: int = 400_000,
         timeout_s: float = 900,
         review_rounds: int = 0,
+        integration_test_cmd: str = "",
+        red_check: bool = True,
     ) -> dict[str, Any]:
         """Wykonuje plan zadań (DAG) tanimi workerami w tle i od razu zwraca run_id.
 
@@ -88,13 +104,25 @@ def build_server(config: Config | None = None, repo: str | Path | None = None) -
         są niewidoczne dla workerów), przechodzi bramkę test_cmd i dopiero wtedy jest scalane
         do gałęzi integracyjnej orchestra/run-<id>. Zadania, których worker nie rozwiązał, wracają
         do Ciebie (status failed) i robisz je sam.
+        integration_test_cmd: pełne testy projektu (komenda bez powłoki, pełna ścieżka do binarki spoza gita), odpalane
+        na gałęzi integracyjnej po każdym scaleniu. Gdy są czerwone, merge jest cofany, a zadanie wraca do workera z
+        wyjściem testów. Baza musi być zielona, inaczej przebieg się nie zaczyna. Pusty łańcuch wyłącza bramkę.
+        red_check (domyślnie true): test_cmd zadania musi failować przed zmianami workera, inaczej zadanie kończy się
+        red_check_failed bez ponawiania (dla refaktoryzacji ustaw expect_red=false w zadaniu).
         review_rounds 1 do 2: po zielonych testach rola reviewer ocenia diff, uwagi wracają do workera (kosztuje
         zużycie roli reviewer, jej agenta zmienia się w TUI). Rozmowa recenzenta z workerem jest widoczna w wierszu inbox TUI. Postęp widać w TUI obok (orch), a stan zwraca run_status.
         """
+        if (blocked := budget_block()) is not None:
+            return blocked
+        if integration_test_cmd.strip():
+            missing = _missing_test_binary(integration_test_cmd, default_repo)
+            if missing:
+                return {"error": "config_error", "message": f"integration_test_cmd: nie znaleziono polecenia {missing!r}"}
         cfg.reload_overrides(default_repo)  # role i modele wybrane w TUI
         plan = Plan(goal=goal, tasks=tasks)
         opts = RunOptions(parallel=parallel, escalate=False, worker=worker, model=model,
-                          token_budget=token_budget, timeout_s=timeout_s, discussion_rounds=review_rounds)
+                          token_budget=token_budget, timeout_s=timeout_s, discussion_rounds=review_rounds,
+                          integration_test_cmd=integration_test_cmd, red_check=red_check)
         reviewer = (make_reviewer(headless_ask(cfg, "reviewer", default_repo, store=store))
                     if opts.discussion_rounds else None)
         sched = Scheduler(cfg, default_repo, store, opts, reviewer=reviewer)

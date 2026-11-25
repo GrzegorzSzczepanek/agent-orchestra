@@ -16,7 +16,7 @@ from typing import Any, Callable
 
 from .commandcode import HeadlessResult, mask_secrets, parse_headless_output, status_for_exit_code
 from .config import Config, ModelRequired
-from .worktree import Worktree, create_worktree, diff, remove_worktree, run
+from .worktree import Worktree, create_worktree, diff, remove_worktree, run, safe_env
 
 
 @dataclass
@@ -84,6 +84,7 @@ async def delegate(
     fake_files: dict[str, str] | None = None,
     cwd: str = "",
     on_line: Callable[[str], None] | None = None,
+    red_check: bool = False,
 ) -> DelegateResult:
     """Tworzy worktree, uruchamia workera headless, odpala test_cmd i zwraca diff."""
     worker = worker or config.role_name("implementer")
@@ -100,6 +101,20 @@ async def delegate(
             res.error = (f"test_cmd: nie znaleziono polecenia {missing!r} (PATH albo katalog {cwd or '.'} w worktree). "
                          "Zainstaluj je, podaj pełną ścieżkę albo popraw test_cmd.")
             return res
+        if red_check and test_cmd:
+            # test ma failować przed zmianami workera, inaczej zadanie jest puste albo test niczego nie weryfikuje
+            try:
+                rcode, rout, rerr = await run(shlex.split(test_cmd), workdir, timeout=timeout_s,
+                                              env=safe_env(config.test_env_passthrough))
+            except asyncio.TimeoutError:
+                res.status, res.error = "timeout", f"red check: test_cmd przekroczył {timeout_s}s"
+                return res
+            if rcode == 0:
+                res.status = "red_check_failed"
+                res.test_exit_code, res.test_output = rcode, _tail(mask_secrets(rout + rerr))
+                res.error = ("red check: test_cmd przechodzi już przed zmianami workera, więc zadanie jest puste albo "
+                             "test niczego nie weryfikuje. Popraw test albo ustaw expect_red=false.")
+                return res
         if worker == "fake":
             for rel, content in (fake_files or {}).items():
                 target = (wt.path / rel).resolve()
@@ -120,7 +135,8 @@ async def delegate(
                 res.status, res.error = "config_error", str(exc)
                 return res
             try:
-                code, out, err = await run(argv, workdir, timeout=timeout_s, on_line=on_line)
+                code, out, err = await run(argv, workdir, timeout=timeout_s, on_line=on_line,
+                                           env=safe_env(agent.env_passthrough))
             except FileNotFoundError:
                 res.status, res.error = "worker_not_found", f"Brak binarki: {argv[0]}"
                 return res
@@ -144,8 +160,9 @@ async def delegate(
                 res.error = _tail(mask_secrets(hr.error or err.strip() or hr.subtype or f"kod wyjścia {code}"))
 
         if test_cmd and res.status == "ok":
-            tcode, tout, terr = await run(shlex.split(test_cmd), workdir, timeout=timeout_s)
-            res.test_exit_code, res.test_output = tcode, _tail(tout + terr)
+            tcode, tout, terr = await run(shlex.split(test_cmd), workdir, timeout=timeout_s,
+                                          env=safe_env(config.test_env_passthrough))
+            res.test_exit_code, res.test_output = tcode, _tail(mask_secrets(tout + terr))
             if tcode != 0:
                 res.status = "tests_failed"
         res.diff = await diff(wt)

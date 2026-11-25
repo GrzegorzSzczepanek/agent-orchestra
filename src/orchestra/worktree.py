@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Callable
+import os
+from typing import Callable, Iterable, Mapping
 import re
 import uuid
 from dataclasses import dataclass
@@ -14,12 +15,34 @@ class GitError(RuntimeError):
     pass
 
 
+# Zmienne bez sekretów, które dostają workery i komendy testowe. Resztę trzeba wymienić w env_passthrough.
+# Proxy może zawierać hasło w URL, ale bez niego worker za proxy nie połączy się z modelem.
+SAFE_ENV = frozenset((
+    "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "COLORTERM", "LANG", "LANGUAGE", "TZ", "TMPDIR",
+    "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR",
+    "NVM_DIR", "VIRTUAL_ENV", "CONDA_PREFIX", "PYTHONDONTWRITEBYTECODE", "CLAUDE_CONFIG_DIR", "CODEX_HOME",
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+    "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE",
+))
+
+
+def safe_env(passthrough: Iterable[str] = ()) -> dict[str, str]:
+    """Okrojone środowisko procesu potomnego: SAFE_ENV, LC_* i jawnie wymienione zmienne."""
+    allowed = SAFE_ENV.union(passthrough)
+    return {k: v for k, v in os.environ.items() if k in allowed or k.startswith("LC_")}
+
+
 async def run(argv: list[str], cwd: str | Path, timeout: float | None = 60,
-              on_line: Callable[[str], None] | None = None) -> tuple[int, str, str]:
-    """Uruchamia proces. on_line dostaje kolejne linie stdout na żywo (np. NDJSON workera)."""
+              on_line: Callable[[str], None] | None = None,
+              env: Mapping[str, str] | None = None) -> tuple[int, str, str]:
+    """Uruchamia proces. on_line dostaje kolejne linie stdout na żywo (np. NDJSON workera).
+
+    env=None dziedziczy całe środowisko (git); dla workerów i testów podawaj safe_env().
+    """
     proc = await asyncio.create_subprocess_exec(
         *argv, cwd=str(cwd), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         limit=16 * 1024 * 1024,  # ramki NDJSON bywają długie
+        env=None if env is None else dict(env),
     )
 
     async def read_stdout() -> str:

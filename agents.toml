@@ -1,12 +1,16 @@
 # Konfiguracja agentów. Komendy do weryfikacji na swojej maszynie (patrz README).
 # acp: komenda uruchamiająca serwer ACP po stdio (jeden proces, jeden katalog projektu)
-# env_passthrough: zmienne środowiskowe przekazywane agentowi ACP (SDK domyślnie daje okrojone środowisko)
+# env_passthrough: zmienne środowiskowe przekazywane agentowi (ACP i headless dostają okrojone środowisko)
 # headless: szablon komendy trybu nieinteraktywnego, {task} i {model} są podstawiane
 
 # Gdy agent roli nie jest zainstalowany, rola przechodzi na pierwszego dostępnego z tej listy
 # (potem na dowolnego innego z pliku). Wybór można zmienić w TUI (przycisk Role) albo `orchestra roles`.
 # Własne agenty i modele dopisz w ~/.config/orchestra/agents.toml albo <repo>/.orchestra/agents.toml.
 fallback_order = ["claude", "commandcode", "opencode", "codex", "antigravity"]
+
+# Workery i test_cmd dostają okrojone środowisko (PATH, HOME, locale, proxy). Dodatkowe zmienne dla testów wpisz tu,
+# a dla agentów w ich env_passthrough.
+test_env_passthrough = []
 
 [roles]
 planner = "claude"
@@ -54,5 +58,10 @@ headless = ["cmd", "-p", "{task}", "--model", "{model}", "--output-format", "jso
 # Zmienna ORCHESTRA_CMD_MODEL ma pierwszeństwo przed default_model.
 model_env = "ORCHESTRA_CMD_MODEL"
 default_model = "deepseek/deepseek-v4.1-flash"
+# Ceny w USD za 1M tokenów do szacowania kosztu (cmd go nie raportuje). Źródło: https://commandcode.ai/models/deepseek-v4-1-flash
+# (stan na 2026-11-25). Wpisano pasmo peak ($0.30 in, $1.20 out) i pominięto rabat za cache ($0.006 vs $0.30 za 1M),
+# więc szacunek jest górną granicą. Off-peak: 0.15 in, 0.60 out. Zmień przy innym modelu.
+price_in_per_mtok = 0.30
+price_out_per_mtok = 1.20
 require_model = true
 tier = "cheap"

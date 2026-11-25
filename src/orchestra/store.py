@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from .commandcode import mask_secrets
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -32,6 +35,21 @@ CREATE TABLE IF NOT EXISTS messages (
     body TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_messages_to ON messages(to_agent, id);
+CREATE TABLE IF NOT EXISTS delegations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    run_id TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    worker TEXT NOT NULL DEFAULT '',
+    worker_tokens_in INTEGER NOT NULL DEFAULT 0,
+    worker_tokens_out INTEGER NOT NULL DEFAULT 0,
+    worker_usd REAL NOT NULL DEFAULT 0,
+    spec_tokens INTEGER NOT NULL DEFAULT 0,
+    review_tokens INTEGER NOT NULL DEFAULT 0,
+    diff_tokens INTEGER NOT NULL DEFAULT 0,
+    outcome TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT ''
+);
 """
 
 
@@ -58,6 +76,28 @@ class Message:
     body: str
 
 
+def _masked(value: Any) -> Any:
+    """Maskuje sekrety we wszystkich napisach payloadu (klucze zostają bez zmian)."""
+    if isinstance(value, str):
+        return mask_secrets(value)
+    if isinstance(value, dict):
+        return {k: _masked(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_masked(v) for v in value]
+    return value
+
+
+def _make_private(path: Path) -> None:
+    """Baza zawiera wyjście agentów i testów: tylko właściciel. Pliki -wal i -shm dziedziczą prawa po bazie."""
+    try:
+        os.close(os.open(path, os.O_CREAT | os.O_WRONLY, 0o600))
+        for p in (path, Path(f"{path}-wal"), Path(f"{path}-shm")):
+            if p.exists():
+                p.chmod(0o600)
+    except OSError:
+        pass  # cudzy plik albo system plików bez praw POSIX
+
+
 class EventStore:
     """Cienka warstwa nad sqlite3. Kilka połączeń (TUI, serwer MCP, klient ACP) może pisać równolegle dzięki WAL."""
 
@@ -65,6 +105,7 @@ class EventStore:
         self.path = str(path)
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+            _make_private(Path(self.path))
         self._lock = threading.Lock()
         self._db = sqlite3.connect(self.path, check_same_thread=False, timeout=10)
         self._db.row_factory = sqlite3.Row
@@ -94,7 +135,7 @@ class EventStore:
             cur = self._db.execute(
                 "INSERT INTO events(ts, agent, session, kind, payload_json, tokens_in, tokens_out, cost)"
                 " VALUES (?,?,?,?,?,?,?,?)",
-                (time.time(), agent, session, kind, json.dumps(payload or {}, ensure_ascii=False, default=str),
+                (time.time(), agent, session, kind, json.dumps(_masked(payload or {}), ensure_ascii=False, default=str),
                  tokens_in, tokens_out, cost),
             )
             return int(cur.lastrowid)
@@ -141,6 +182,22 @@ class EventStore:
             ).fetchone()
         return {"tokens_in": row["ti"] or 0, "tokens_out": row["tout"] or 0, "cost": row["c"] or 0.0,
                 "attempts": row["n"] or 0}
+
+    # --- rejestr delegacji (koszt i opłacalność, patrz ledger.py) ---
+    def add_delegation(self, *, run_id: str, task_id: str, outcome: str, worker: str = "", worker_tokens_in: int = 0,
+                       worker_tokens_out: int = 0, worker_usd: float = 0.0, spec_tokens: int = 0,
+                       review_tokens: int = 0, diff_tokens: int = 0, note: str = "") -> int:
+        with self._lock, self._db:
+            cur = self._db.execute(
+                "INSERT INTO delegations(ts, run_id, task_id, worker, worker_tokens_in, worker_tokens_out, worker_usd,"
+                " spec_tokens, review_tokens, diff_tokens, outcome, note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (time.time(), run_id, task_id, worker, worker_tokens_in, worker_tokens_out, worker_usd, spec_tokens,
+                 review_tokens, diff_tokens, outcome, note))
+            return int(cur.lastrowid)
+
+    def delegations(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return [dict(r) for r in self._db.execute("SELECT * FROM delegations ORDER BY id")]
 
     # --- wiadomości ---
     def post_message(self, from_agent: str, to_agent: str, body: str, thread: str = "") -> int:

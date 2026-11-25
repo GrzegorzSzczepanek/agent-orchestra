@@ -21,7 +21,7 @@ STATUS_BY_KIND = {
 STREAM_KINDS = ("agent_message", "agent_thought")
 
 
-def render_events(events: list[Event]) -> list[Text]:
+def render_events(events: list[Event], compact: bool = False) -> list[Text]:
     """Łączy kolejne fragmenty strumienia (message/thought) w jedną linię, resztę formatuje osobno."""
     lines: list[Text] = []
     buf: list[str] = []
@@ -32,7 +32,8 @@ def render_events(events: list[Event]) -> list[Text]:
         if buf:
             joined = "".join(buf)
             if buf_kind == "agent_thought":
-                lines.append(Text("… " + joined, style="dim italic"))
+                if not compact:
+                    lines.append(Text("… " + joined, style="dim italic"))
             else:
                 lines.append(Text(joined, style="green"))
         buf, buf_kind = [], ""
@@ -45,14 +46,14 @@ def render_events(events: list[Event]) -> list[Text]:
             buf.append(ev.payload.get("text", ""))
             continue
         flush()
-        line = _render_one(ev)
+        line = _render_one(ev, compact)
         if line is not None:
             lines.append(line)
     flush()
     return lines
 
 
-def _render_one(ev: Event) -> Text | None:
+def _render_one(ev: Event, compact: bool = False) -> Text | None:
     p = ev.payload
     match ev.kind:
         case "prompt_start":
@@ -78,7 +79,10 @@ def _render_one(ev: Event) -> Text | None:
         case _:
             from .watch import fmt_event  # zdarzenia orkiestracji (run_plan, delegate) mają własny format
 
-            return fmt_event(ev) or Text(f"{ev.kind}: {p}", style="dim")
+            line = fmt_event(ev, compact)
+            if line is None and not compact:
+                return Text(f"{ev.kind}: {p}", style="dim")
+            return line
 
 
 def status_of(kind: str, current: str) -> str:

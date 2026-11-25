@@ -196,7 +196,7 @@ def mask_secrets(text: str, env: Mapping[str, str] | None = None) -> str:
 
 def _short(value: Any, limit: int = 160) -> str:
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
-    text = " ".join(text.split())
+    text = " ".join(mask_secrets(text).split())  # maskowanie przed przycięciem, inaczej zostaje początek sekretu
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 

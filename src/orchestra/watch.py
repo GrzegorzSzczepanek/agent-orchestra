@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 
@@ -19,7 +20,41 @@ STATUS_ICON = {"pending": "○", "running": "●", "done": "✓", "failed": "✗
                "over_budget": "$"}
 
 
-def fmt_event(ev: Event) -> Text | None:
+# --- widok zwięzły: to, co człowiek chce śledzić (co worker robi, co mówi, czy testy przechodzą) ---
+_WORKTREE = re.compile(r"(?:/[^\s:'\"]+)?/\.orchestra/worktrees/[^/\s:'\"]+/?")
+_VENV = re.compile(r"(?:/[^\s:'\"]+)?/\.venv/bin/")
+_OUTCOME = re.compile(r"\b\d+ (?:passed|failed)\b[^\[\n]*|\bTraceback\b.*|\bno tests ran\b.*")
+TOOL_LABEL = {"read_file": "czyta", "read_multiple_files": "czyta", "read_directory": "przegląda", "grep": "szuka",
+              "glob": "szuka plików", "write_file": "zapisuje", "edit_file": "edytuje", "shell_command": "$"}
+
+
+def _clip(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _tidy(text: str) -> str:
+    """Skraca ścieżki worktree i venv, które zajmują pół ekranu i nic nie mówią."""
+    return _VENV.sub("", _WORKTREE.sub("", text))
+
+
+def _compact_step(step: str, text: str) -> Text | None:
+    text = " ".join(_tidy(text).split())
+    if step == "tool":
+        name, _, detail = text.partition(": ")
+        return Text.assemble(("  " + TOOL_LABEL.get(name, name) + " ", "yellow"), (_clip(detail or ".", 90), ""))
+    if step == "result":  # pokazujemy tylko wynik testów i błędy, reszta to zrzuty plików
+        found = _OUTCOME.search(text)
+        if not found:
+            return None
+        summary = found.group(0).strip()
+        bad = "failed" in summary or "Traceback" in summary or "no tests" in summary
+        return Text("    ↳ " + _clip(summary, 90), style="bold red" if bad else "bold green")
+    if step == "text":
+        return Text("\n" + _clip(text, 240), style="green")
+    return None  # rozumowanie modelu
+
+
+def fmt_event(ev: Event, compact: bool = False) -> Text | None:
     """Jedna zwięzła linia dla zdarzeń orkiestracji. Strumień wiadomości agentów pomijamy (to robi orchestra-tui)."""
     p, clock = ev.payload, time.strftime("%H:%M:%S", time.localtime(ev.ts))
     tok = f" {ev.tokens_in}/{ev.tokens_out} tok" if ev.tokens_in or ev.tokens_out else ""
@@ -29,6 +64,20 @@ def fmt_event(ev: Event) -> Text | None:
                         style="bold cyan")
         case "task_start":
             return Text(f"{clock}   ● {p.get('task_id')} start ({p.get('difficulty')})", style="yellow")
+        case "task_attempt" if compact:
+            ok = p.get("status") == "ok"
+            esc = ", eskalacja" if p.get("escalated") else ""
+            total = ev.tokens_in + ev.tokens_out
+            used = f", {round(total / 1000)}k tok" if total >= 1000 else ""
+            text = Text(f"\n{'✓' if ok else '✗'} próba {p.get('attempt')}: {p.get('status')}{esc}{used}",
+                        style="bold green" if ok else "bold red")
+            if not ok:
+                why = (p.get("error", "")[-300:] + "\n" + p.get("test_output", "")).strip()
+                tail = [_clip(_tidy(ln), 110) for ln in why.splitlines() if ln.strip()][-4:]
+                if tail:
+                    text.append("\n" + "\n".join("  " + ln for ln in tail), style="red")
+                    text.append("\n  F5: pełny wynik", style="dim")
+            return text
         case "task_attempt":
             ok = p.get("status") == "ok"
             esc = " (eskalacja)" if p.get("escalated") else ""
@@ -40,6 +89,10 @@ def fmt_event(ev: Event) -> Text | None:
                     text.append("\n" + "\n".join("      " + ln for ln in why.splitlines()[-8:]), style="dim red")
                     text.append(f"\n      (pełny wynik: /detail {p.get('task_id')})", style="dim")
             return text
+        case "worker_step" if compact:
+            return _compact_step(p.get("step", ""), p.get("text", ""))
+        case "worker_end" if compact:
+            return None  # to samo mówi task_attempt
         case "worker_step":
             style = {"tool": "yellow", "result": "dim", "text": "green", "think": "dim italic"}.get(p.get("step", ""), "")
             mark = {"tool": "⚙", "result": "  ↳", "text": "💬", "think": "…"}.get(p.get("step", ""), "·")

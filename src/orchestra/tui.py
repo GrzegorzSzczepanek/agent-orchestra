@@ -356,6 +356,7 @@ class OrchestraApp(App[None]):
         Binding("f7", "plan", "Plan"),
         Binding("f8", "roles", "Role"),
         Binding("f2", "toggle_diff", "Diff"),
+        Binding("f9", "toggle_full_log", "Pełny log"),
         Binding("ctrl+q", "quit", "Wyjście"),
     ]
 
@@ -365,6 +366,7 @@ class OrchestraApp(App[None]):
         self.store, self.controller, self.poll_s = store, controller, poll_s
         self.config, self.repo, self.config_path = config, repo, config_path
         self.selected = ""
+        self.compact = True  # F9 przełącza na pełny log (rozumowanie, surowe wyniki narzędzi, pełne ścieżki)
         self._last_id = 0
         self._status: dict[str, str] = {}
         self._run_events: list = []
@@ -385,7 +387,7 @@ class OrchestraApp(App[None]):
             with Vertical(id="side"):
                 yield DataTable(id="agents", cursor_type="row")
             with Vertical(id="main"):
-                yield RichLog(id="log", wrap=True, highlight=False, markup=False)
+                yield RichLog(id="log", wrap=True, min_width=20, highlight=False, markup=False)
                 yield RichLog(id="diff", wrap=False, highlight=False, markup=False)
                 yield Static("", id="hint")
                 yield Input(placeholder="Zaznacz agenta albo zadanie po lewej", id="prompt")
@@ -465,7 +467,7 @@ class OrchestraApp(App[None]):
             if not self.selected and self._status:
                 self.select_agent(next(iter(self._status)))
             elif self.selected:
-                for line in render_events([e for e in events if self._belongs(e, self.selected)]):
+                for line in render_events([e for e in events if self._belongs(e, self.selected)], self.compact):
                     self._log.write(line)
         for agent, tot in self.store.totals().items():
             if agent in self._status and not agent.startswith("task:"):
@@ -510,16 +512,22 @@ class OrchestraApp(App[None]):
             evs = [e for e in self.store.events(limit=100000) if self._belongs(e, name)]
         else:
             evs = self.store.events(agent=name, limit=5000)
-        for line in render_events(evs):
+        for line in render_events(evs, self.compact):
             log.write(line)
         self._update_hint()
+
+    def action_toggle_full_log(self) -> None:
+        self.compact = not self.compact
+        if self.selected:
+            self.select_agent(self.selected)
+        self.notify("Log zwięzły" if self.compact else "Log pełny (F9 wraca do zwięzłego)")
 
     def _update_hint(self) -> None:
         name = self.selected
         if name.startswith("task:"):
             tid = name[5:]
-            self._hint.update(f"Zadanie {tid}: kroki workera na żywo. Tekst poniżej to wskazówka dla następnej próby. "
-                              "F5 pokazuje błąd i wynik testów, F6 anuluje przebieg.")
+            self._hint.update(f"Zadanie {tid}. Tekst poniżej to wskazówka dla następnej próby. "
+                              "F5 błąd i testy, F6 anuluj, F9 pełny log.")
             self._prompt.placeholder = f"Wskazówka dla zadania {tid} + Enter"
         elif self.controller is not None and name in self.controller.specs:
             self._hint.update(f"Agent {name}: tekst poniżej to prompt. F3 wysyła wiadomość od Ciebie do dowolnego agenta, "

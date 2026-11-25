@@ -12,6 +12,7 @@ Budżet tokenów i kosztu na zadanie liczy się z logu SQLite (zdarzenia task_at
 from __future__ import annotations
 
 import asyncio
+import shlex
 import uuid
 from dataclasses import asdict, dataclass, field
 from graphlib import TopologicalSorter
@@ -23,10 +24,13 @@ from .commandcode import summarize_frame
 from .delegate import DelegateResult, delegate
 from .plan import Plan, PlanTask
 from .store import EventStore
-from .worktree import GitError, Worktree, create_worktree, git, remove_worktree
+from .ledger import budget_state
+from .worktree import GitError, Worktree, create_worktree, git, remove_worktree, run, safe_env
 
 # Statusy workera, przy których ponawianie i eskalacja nie mają sensu (zła konfiguracja, brak dostępu, brak kredytów).
 FATAL_STATUSES = {"config_error", "worker_not_found", "auth_failed", "insufficient_credits"}
+# Statusy kończące tylko to zadanie, bez ponawiania i bez zatrzymywania reszty przebiegu.
+TASK_FATAL_STATUSES = {"red_check_failed"}
 GIT_ID = ["-c", "user.name=orchestra", "-c", "user.email=orchestra@localhost"]
 
 
@@ -43,6 +47,8 @@ class RunOptions:
     worker: str = ""  # nadpisanie roli implementer
     model: str = ""
     timeout_s: float = 900
+    red_check: bool = True  # test_cmd musi failować przed zmianami workera (PlanTask.expect_red=false wyłącza dla zadania)
+    integration_test_cmd: str = ""  # pełne testy po każdym scaleniu, przy porażce merge jest cofany; puste wyłącza
 
     def __post_init__(self) -> None:
         self.parallel = max(1, min(3, int(self.parallel)))
@@ -182,7 +188,8 @@ class Scheduler:
         return await delegate(self.config, self.repo, prompt, test_cmd=task.test_cmd, worker=worker,
                               model=self.opt.model if worker == self._worker() else "", base=base,
                               timeout_s=self.opt.timeout_s, keep_worktree=True, cwd=task.cwd,
-                              on_line=self._step_logger(task, worker))
+                              on_line=self._step_logger(task, worker),
+                              red_check=self.opt.red_check and task.expect_red)
 
     # --- sterowanie z TUI przez skrzynkę wiadomości ---
     def _hints(self, task_id: str) -> str:
@@ -211,16 +218,35 @@ class Scheduler:
         self.store.add_event("scheduler", kind, {"run_id": self.run_id, **payload}, **kw)
 
     # --- scalanie ---
-    async def _integrate(self, task: PlanTask, res: DelegateResult) -> str:
-        """Commit w worktree zadania i merge do gałęzi integracyjnej. Zwraca "" albo opis błędu."""
+    async def _integration_check(self) -> str:
+        """Pełne testy na gałęzi integracyjnej. Zwraca "" gdy zielono, inaczej ogon wyjścia z opisem porażki."""
+        assert self._integ is not None
+        cmd = self.opt.integration_test_cmd.strip()
+        if not cmd:
+            return ""
+        try:
+            code, out, err = await run(shlex.split(cmd), self._integ.path, timeout=self.opt.timeout_s,
+                                       env=safe_env(self.config.test_env_passthrough))
+        except FileNotFoundError:
+            return f"nie znaleziono polecenia z integration_test_cmd: {cmd}"
+        except asyncio.TimeoutError:
+            return f"integration_test_cmd przekroczył {self.opt.timeout_s}s"
+        return "" if code == 0 else ((out + err)[-1500:] or f"kod wyjścia {code}")
+
+    async def _integrate(self, task: PlanTask, res: DelegateResult) -> tuple[str, str]:
+        """Commit w worktree zadania i merge do gałęzi integracyjnej, potem opcjonalnie pełne testy.
+
+        Zwraca ("", "") albo (status, opis błędu): merge_conflict lub integration_failed (merge cofnięty).
+        """
         assert self._integ is not None
         wt_path = Path(res.worktree)
         try:
             await git(["add", "-A"], wt_path)
             await git([*GIT_ID, "commit", "-q", "--allow-empty", "-m", f"orchestra: {task.id}"], wt_path)
         except GitError as exc:
-            return f"commit nie powiódł się: {exc}"
+            return "merge_conflict", f"commit nie powiódł się: {exc}"
         async with self._merge_lock:
+            before = (await git(["rev-parse", "HEAD"], self._integ.path)).strip()
             try:
                 await git([*GIT_ID, "merge", "--no-ff", "-q", "-m", f"orchestra: scalono {task.id}", res.branch],
                           self._integ.path)
@@ -229,8 +255,14 @@ class Scheduler:
                     await git(["merge", "--abort"], self._integ.path)
                 except GitError:
                     pass
-                return f"konflikt scalania: {exc}"
-        return ""
+                return "merge_conflict", f"konflikt scalania: {exc}"
+            if self.opt.integration_test_cmd.strip():
+                bad = await self._integration_check()
+                self._log("integration_check", {"task_id": task.id, "ok": not bad, "output": bad[-800:]})
+                if bad:
+                    await git(["reset", "--hard", before], self._integ.path)
+                    return "integration_failed", f"po scaleniu pełne testy są czerwone, merge cofnięty:\n{bad}"
+        return "", ""
 
     async def _cleanup(self, res: DelegateResult | None) -> None:
         if res and res.worktree and Path(res.worktree).exists():
@@ -264,6 +296,11 @@ class Scheduler:
                 break
             if self.opt.cost_budget_usd and used["cost"] >= self.opt.cost_budget_usd:
                 out.status, out.error = "over_budget", f"limit kosztu {self.opt.cost_budget_usd} USD na zadanie"
+                break
+
+            budget = budget_state(self.repo, self.store, self.config)
+            if budget is not None and budget.exceeded:
+                out.status, out.error = "over_budget", budget.message()
                 break
 
             worker = strong if tier_strong else cheap
@@ -308,12 +345,18 @@ class Scheduler:
                             out.review_unresolved = True  # limit rund: akceptujemy zielone testy, uwagi zostają w raporcie
                         else:
                             continue
-                merge_err = await self._integrate(task, res)
-                if not merge_err:
+                merge_status, merge_err = await self._integrate(task, res)
+                if not merge_status:
                     out.status, out.branch = "done", res.branch
                     break
-                status, res.error = "merge_conflict", merge_err
+                status, res.error = merge_status, merge_err
+                if merge_status == "integration_failed":
+                    res.test_output = merge_err[-1500:]
                 attempt.status = status
+
+            if status in TASK_FATAL_STATUSES:
+                out.status, out.error = "failed", f"{status}: {res.error}"[:400]
+                break
 
             if status in FATAL_STATUSES:
                 out.status, out.error = "failed", f"{status}: {res.error}"
@@ -345,6 +388,21 @@ class Scheduler:
                                 "integration_branch": self._integ.branch,
                                 "plan": [{"id": t.id, "difficulty": t.difficulty, "depends_on": t.depends_on,
                                           "description": t.description[:120]} for t in plan.tasks]})
+        if self.opt.integration_test_cmd.strip():
+            bad = await self._integration_check()
+            if bad:  # baza już jest czerwona: każde scalenie byłoby cofane, więc nie zaczynamy
+                msg = f"integration_test_cmd nie przechodzi jeszcze przed zadaniami (baza czerwona): {bad[-500:]}"
+                outcomes0 = {t.id: TaskOutcome(t.id, "skipped", error=msg) for t in plan.tasks}
+                for t in plan.tasks:
+                    self._log("task_end", {"task_id": t.id, "status": "skipped", "attempts": 0, "escalated": False,
+                                           "tokens": 0})
+                report0 = RunReport(self.run_id, self._integ.branch, outcomes0)
+                try:
+                    await git(["worktree", "remove", "--force", str(self._integ.path)], self.repo)
+                except GitError:
+                    pass
+                self._log("run_end", {"ok": False, "integration_branch": report0.integration_branch, "error": msg})
+                return report0
         tasks = plan.by_id()
         ts = TopologicalSorter({t.id: set(t.depends_on) for t in plan.tasks})
         ts.prepare()

@@ -152,7 +152,7 @@ Zadanie w `run_plan`: `id`, `description`, `files`, `acceptance`, `test_cmd` (ko
 - **Kontrola test_cmd:** gdy programu z `test_cmd` nie ma w PATH, zadanie zatrzymuje się, zanim worker zużyje tokeny.
 - **Błędy krytyczne** (zła konfiguracja, brak logowania, brak kredytów) kończą zadanie bez ponawiania i zatrzymują resztę przebiegu.
 - **Recenzent:** `review_rounds` 1 do 2 po zielonych testach. Badania nad debatą wieloagentową dają mieszane wyniki i wyższy koszt, więc domyślnie jest wyłączona.
-- **Środowisko:** worker `cmd` dostaje `--yolo`, bo izolacją jest worktree. Nie uruchamiaj go na repozytorium z sekretami, których worker nie powinien widzieć. SDK ACP przekazuje agentom okrojone środowisko, sekrety trzeba wymienić jawnie w `env_passthrough`.
+- **Środowisko:** worker `cmd` dostaje `--yolo`, bo izolacją jest worktree. Nie uruchamiaj go na repozytorium z sekretami, których worker nie powinien widzieć. Agenci (ACP i headless) dostają okrojone środowisko, więc sekrety trzeba wymienić jawnie w `env_passthrough`, a zmienne potrzebne `test_cmd` w `test_env_passthrough` na najwyższym poziomie pliku. Ogranicza to tylko zmienne środowiskowe: worker nadal może czytać pliki dostępne dla Twojego użytkownika, także te w `HOME`. Sekrety w logu zdarzeń są maskowane na tyle, na ile rozpoznają je wzorce, a plik logu może czytać tylko właściciel.
 
 Realny koszt: pojedyncza próba workera w prawdziwych zadaniach zużywa rzędu 50 do 170 tys. tokenów wejścia (głównie kontekst i cache), a stały narzut `cmd -p` to około 15 tys. tokenów. Opłaca się to dla zadań z jasnym testem i 1 do 3 plikami, a nie dla jednolinijkowych poprawek.
 

@@ -106,7 +106,7 @@ async def test_doctor_model_not_set_is_warning(fake_path, monkeypatch):
                                                 (3, FAIL, "auth_failed")])
 async def test_doctor_smoke_error_codes(fake_path, monkeypatch, code, status, needle):
     monkeypatch.setenv("FAKE_CMD_HEADLESS_CODE", str(code))
-    rep = await run_doctor(load_config(ROOT / "agents.toml"), smoke=True, timeout=20, others=False)
+    rep = await run_doctor(_with_extra_passthrough("FAKE_CMD_HEADLESS_CODE"), smoke=True, timeout=20, others=False)
     c = by_name(rep)["cmd: smoke test headless"]
     assert c.status == status and needle in c.detail
 

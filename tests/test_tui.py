@@ -210,11 +210,11 @@ async def test_tasks_visible_immediately_with_live_steps(store: EventStore):
         assert t.get_cell("task:a", "status").endswith("working") and t.get_cell("task:b", "status").endswith("pending")
         assert "przebieg r1" in app.sub_title
         app.select_agent("task:a")
-        assert "write_file: a.py" in log_text(app)
+        assert "zapisuje a.py" in log_text(app)
         # nowy krok workera pojawia się na żywo w otwartym zadaniu
-        store.add_event("task:a", "worker_step", {"run_id": "r1", "task_id": "a", "step": "result", "text": "created",
+        store.add_event("task:a", "worker_step", {"run_id": "r1", "task_id": "a", "step": "result", "text": "3 passed in 0.1s",
                                                   "attempt": 1, "worker": "cheap"})
-        await wait_for(pilot, lambda: "created" in log_text(app))
+        await wait_for(pilot, lambda: "3 passed" in log_text(app))
 
 
 async def test_text_on_task_row_is_hint_and_buttons_open_dialogs(store: EventStore):

@@ -40,6 +40,26 @@ def build_parser() -> argparse.ArgumentParser:
     ro.add_argument("--model", action="append", default=[], metavar="AGENT=MODEL",
                     help="model agenta, np. opencode=opencode/big-pickle (pusta wartość kasuje wybór)")
 
+    lg = sub.add_parser("ledger", help="rejestr delegacji (opłacalność) i budżet sesji workerów")
+    lsub = lg.add_subparsers(dest="ledger_cmd", required=True)
+    for name, text in (("add", "zapisz recenzję delegacji"), ("show", "tabela delegacji i proponowany próg"),
+                       ("budget", "budżet sesji workerów w USD")):
+        p = lsub.add_parser(name, help=text)
+        _add_common(p)
+        p.add_argument("--repo", default=".")
+    la = lsub.choices["add"]
+    la.add_argument("run_id")
+    la.add_argument("task_id")
+    la.add_argument("--outcome", required=True, choices=["accepted", "fixed", "rejected"],
+                    help="accepted: bez poprawek, fixed: z poprawkami, rejected: odrzucone i zrobione samemu")
+    la.add_argument("--spec-file", action="append", default=[], help="plik z opisem lub testem napisanym przez mocny model")
+    la.add_argument("--diff-branch", default="", help="gałąź z wynikiem workera (rozmiar diffu to koszt recenzji)")
+    la.add_argument("--notes-chars", type=int, default=0, help="liczba znaków uwag z recenzji")
+    la.add_argument("--note", default="")
+    lb = lsub.choices["budget"]
+    lb.add_argument("--set", type=float, default=None, metavar="USD", help="zacznij nową sesję z limitem w USD (0 wyłącza)")
+    lb.add_argument("--check", action="store_true", help="kod wyjścia 3, gdy budżet przekroczony")
+
     ip = sub.add_parser("init-plan", help="zapisz szablon planu JSON do ręcznego podziału zadań (potem: orchestra run)")
     ip.add_argument("out", nargs="?", default="plan.json")
 
@@ -64,6 +84,9 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--worker", default="", help="nadpisz agenta roli implementer")
     r.add_argument("--model", default="", help="model taniego workera (inaczej zmienna z agents.toml)")
     r.add_argument("--timeout", type=float, default=900, help="limit czasu pojedynczego workera w sekundach")
+    r.add_argument("--integration-test", default="", metavar="KOMENDA",
+                   help="pełne testy po każdym scaleniu (przy porażce merge jest cofany)")
+    r.add_argument("--no-red-check", action="store_true", help="nie wymagaj, żeby test_cmd failował przed zmianami workera")
     r.add_argument("--report", default="", help="plik raportu JSON (domyślnie .orchestra/runs/<id>.json)")
     return ap
 
@@ -113,7 +136,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     store = EventStore(repo / ".orchestra" / "events.db")
     opts = RunOptions(parallel=args.parallel, max_failures=args.max_failures, escalate=not args.no_escalate,
                       token_budget=args.token_budget, cost_budget_usd=args.cost_budget,
-                      discussion_rounds=args.rounds, worker=args.worker, model=args.model, timeout_s=args.timeout)
+                      discussion_rounds=args.rounds, worker=args.worker, model=args.model, timeout_s=args.timeout,
+                      integration_test_cmd=args.integration_test, red_check=not args.no_red_check)
     reviewer = (make_reviewer(headless_ask(cfg, "reviewer", repo, store=store))
                 if opts.discussion_rounds else None)
     report = asyncio.run(run_plan(plan, cfg, repo, store, opts, reviewer=reviewer))
@@ -184,6 +208,55 @@ def cmd_roles(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ledger(args: argparse.Namespace) -> int:
+    from . import ledger
+    from .ledger_report import format_table, proposed_threshold
+    from .store import EventStore
+    from .worktree import ensure_local_exclude
+
+    repo = Path(args.repo).resolve()
+    ensure_local_exclude(repo)
+    cfg = load_config(args.config, repo=repo)
+    store = EventStore(repo / ".orchestra" / "events.db")
+    if args.ledger_cmd == "add":
+        import subprocess
+
+        worker, tin, tout, usd = ledger.task_worker_usage(store, cfg, args.run_id, args.task_id)
+        if not worker:
+            print(f"Brak prób zadania {args.task_id} w przebiegu {args.run_id}.", file=sys.stderr)
+            return 1
+        spec = sum(ledger.estimate_tokens(Path(f).read_text(encoding="utf-8")) for f in args.spec_file)
+        diff_tokens = 0
+        if args.diff_branch:
+            out = subprocess.run(["git", "diff", f"HEAD...{args.diff_branch}"], cwd=repo, capture_output=True, text=True)
+            diff_tokens = ledger.estimate_tokens(out.stdout) if out.returncode == 0 else 0
+        review = diff_tokens + ledger.estimate_tokens("x" * args.notes_chars)
+        store.add_delegation(run_id=args.run_id, task_id=args.task_id, outcome=args.outcome, worker=worker,
+                             worker_tokens_in=tin, worker_tokens_out=tout, worker_usd=usd, spec_tokens=spec,
+                             review_tokens=review, diff_tokens=diff_tokens, note=args.note)
+        print(f"Zapisano {args.task_id}: worker {tin}/{tout} tok (~{usd:.4f} USD), opis ~{spec}, recenzja ~{review}, "
+              f"diff ~{diff_tokens} (tokeny mocnego modelu to szacunek: znaki / {ledger.CHARS_PER_TOKEN})")
+        return 0
+    if args.ledger_cmd == "show":
+        rows = ledger.rows_from_store(store)
+        print(format_table(rows))
+        print("\n" + proposed_threshold(rows).text)
+    if args.ledger_cmd in ("show", "budget"):
+        if args.ledger_cmd == "budget" and args.set is not None:
+            ledger.start_session(repo, args.set)
+        state = ledger.budget_state(repo, store, cfg)
+        if state is None:
+            print("Budżet sesji: nieustawiony (orchestra ledger budget --set USD).")
+            return 0
+        flag = "  PRZEKROCZONY" if state.exceeded else ""
+        print(f"Budżet sesji: {state.spent_usd:.4f} z {state.limit_usd:.2f} USD (szacunek z cen w agents.toml){flag}")
+        if state.unpriced_agents:
+            print(f"Uwaga: brak ceny w agents.toml dla: {', '.join(state.unpriced_agents)} (liczone jako 0).")
+        if args.ledger_cmd == "budget" and args.check and state.exceeded:
+            return 3
+    return 0
+
+
 def cmd_watch(args: argparse.Namespace) -> int:
     from .watch import main as watch_main
 
@@ -209,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
     ensure_node()
     args = build_parser().parse_args(argv)
     handlers = {"doctor": cmd_doctor, "plan": cmd_plan, "run": cmd_run, "watch": cmd_watch,
-                "roles": cmd_roles, "init-plan": cmd_init_plan}
+                "roles": cmd_roles, "init-plan": cmd_init_plan, "ledger": cmd_ledger}
     handler = handlers.get(args.command)
     if handler is None:  # pragma: no cover
         return 2

@@ -31,6 +31,9 @@ class PlanTask(BaseModel):
     cwd: str = Field(default="", description="Podkatalog repo, w którym działa worker i test_cmd (np. \"code\"); pusty to korzeń repo")
     difficulty: Difficulty = Field(default="easy", description="easy i medium robi tani worker, hard mocny model")
     depends_on: list[str] = Field(default_factory=list, description="Identyfikatory zadań, które muszą być gotowe")
+    expect_red: bool = Field(default=True, description=(
+        "Czy test_cmd ma failować przed zmianami workera (red check). Ustaw false tylko dla refaktoryzacji i testów "
+        "charakteryzujących, gdzie test przechodzi już na starcie i ma przechodzić po zmianie"))
 
     @field_validator("id")
     @classmethod

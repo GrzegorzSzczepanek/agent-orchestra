@@ -44,7 +44,6 @@ done
 [[ -d "$REPO/.git" ]] || { echo "To nie jest repozytorium git: $REPO" >&2; exit 1; }
 REPO="$(cd "$REPO" && pwd)"
 
-export ORCHESTRA_CMD_MODEL="${ORCHESTRA_CMD_MODEL:-deepseek/deepseek-v4.1-flash}"
 if [[ -z "$(cmd status 2>/dev/null | grep -iE 'authenticated|zalogowan' || true)" ]]; then
   echo "Uwaga: cmd wyglada na niezalogowany. Uruchom: cmd login" >&2
 fi

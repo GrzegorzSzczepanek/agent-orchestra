@@ -12,7 +12,7 @@ from .delegate import DelegateResult
 from .plan import PlanTask
 from .scheduler import Verdict
 from .store import EventStore
-from .worktree import git, run
+from .worktree import git, run, safe_env
 
 Ask = Callable[[str], Awaitable[str]]
 
@@ -49,7 +49,7 @@ def headless_ask(
     async def ask(prompt: str) -> str:
         argv = agent.headless_argv(prompt, model or None)
         try:
-            code, out, err = await run(argv, repo, timeout=timeout_s)
+            code, out, err = await run(argv, repo, timeout=timeout_s, env=safe_env(agent.env_passthrough))
         except FileNotFoundError as exc:
             log("worker_not_found")
             raise AskError(f"brak binarki {argv[0]} dla roli {role}") from exc
