@@ -149,7 +149,7 @@ Zadanie w `run_plan`: `id`, `description`, `files`, `acceptance`, `test_cmd` (ko
 ## Hierarchia kosztowa i zabezpieczenia
 
 - **Bramka testów:** `test_cmd` musi przejść, zanim gałąź zadania zostanie scalona. Konflikt scalenia liczy się jak porażka.
-- **Eskalacja:** po 2 kolejnych porażkach taniego workera zadanie dostaje jedną próbę od roli `planner` (w CLI `orchestra run`). W `run_plan` z Claude Code eskalacja jest wyłączona: nieudane zadanie wraca do Claude'a.
+- **Eskalacja:** po 2 kolejnych porażkach taniego workera zadanie dostaje jedną próbę od roli `planner`. Dotyczy to zarówno CLI `orchestra run`, jak i narzędzia MCP `run_plan` z Claude Code.
 - **Budżet:** limit tokenów (domyślnie 400 tys.) i opcjonalnie kosztu na zadanie, liczone z logu SQLite.
 - **Kontrola test_cmd:** gdy programu z `test_cmd` nie ma w PATH, zadanie zatrzymuje się, zanim worker zużyje tokeny.
 - **Sprawdzenie czerwonego testu:** `test_cmd` zadania musi się wywalić, zanim worker cokolwiek zmieni (`red_check`, domyślnie włączone w `run_plan`). Jeśli test przechodzi od razu, zadanie kończy się jako `red_check_failed` bez ponawiania: jest albo pusty, albo niczego nie sprawdza. W refaktorach ustaw `expect_red` na false. `orchestra run --no-red-check` wyłącza sprawdzenie.

@@ -53,7 +53,7 @@ description = "Command Code (commandcode.ai), the Go plan works only through the
 acp = ["cmd", "acp"]
 env_passthrough = ["COMMAND_CODE_API_KEY", "CMD_ZDR", "CMD_LOCAL_ONLY"]
 # --no-skills and --safe-mode cut off the skills directory and modes. The effect on tokens is within noise (see README).
-headless = ["cmd", "-p", "{task}", "--model", "{model}", "--output-format", "json", "--max-turns", "30", "--yolo", "--skip-onboarding", "--no-skills", "--safe-mode"]
+headless = ["cmd", "-p", "{task}", "--model", "{model}", "--output-format", "json", "--max-turns", "80", "--yolo", "--skip-onboarding", "--no-skills", "--safe-mode"]
 # Model: an ID from `cmd --list-models` (full or the part after the last "/"). A missing model is a clear error.
 # The ORCHESTRA_CMD_MODEL variable takes precedence over default_model.
 model_env = "ORCHESTRA_CMD_MODEL"

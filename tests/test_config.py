@@ -46,6 +46,14 @@ def test_commandcode_requires_model_with_clear_message(monkeypatch):
     assert a.headless_argv("t") == ["x", "t"]
 
 
+def test_commandcode_worker_allows_long_tasks():
+    cfg = load_config(ROOT / "agents.toml")
+    argv = cfg.agents["commandcode"].headless_argv("t")
+    assert "--max-turns" in argv
+    assert int(argv[argv.index("--max-turns") + 1]) >= 60
+    assert "--yolo" in argv
+
+
 def test_skills_symlink():
     assert (ROOT / ".claude" / "skills").is_symlink()
     assert (ROOT / ".claude/skills/delegate-simple-tasks/SKILL.md").exists()

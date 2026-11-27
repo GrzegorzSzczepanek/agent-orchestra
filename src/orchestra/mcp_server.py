@@ -120,7 +120,7 @@ def build_server(config: Config | None = None, repo: str | Path | None = None) -
                 return {"error": "config_error", "message": f"integration_test_cmd: command not found {missing!r}"}
         cfg.reload_overrides(default_repo)  # roles and models chosen in the TUI
         plan = Plan(goal=goal, tasks=tasks)
-        opts = RunOptions(parallel=parallel, escalate=False, worker=worker, model=model,
+        opts = RunOptions(parallel=parallel, escalate=True, worker=worker, model=model,
                           token_budget=token_budget, timeout_s=timeout_s, discussion_rounds=review_rounds,
                           integration_test_cmd=integration_test_cmd, red_check=red_check)
         reviewer = (make_reviewer(headless_ask(cfg, "reviewer", default_repo, store=store))

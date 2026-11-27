@@ -151,7 +151,7 @@ A `run_plan` task has: `id`, `description`, `files`, `acceptance`, `test_cmd` (a
 ## Cost hierarchy and safeguards
 
 - **Test gate:** `test_cmd` must pass before a task branch is merged. A merge conflict counts as a failure.
-- **Escalation:** after 2 consecutive failures of the cheap worker, the task gets one attempt from the `planner` role (in the `orchestra run` CLI). In `run_plan` from Claude Code, escalation is off: a failed task goes back to Claude.
+- **Escalation:** after 2 consecutive failures of the cheap worker, the task gets one attempt from the `planner` role. This applies both to the `orchestra run` CLI and to the MCP `run_plan` from Claude Code.
 - **Budget:** a token limit (default 400k) and optionally a cost limit per task, computed from the SQLite log.
 - **Test command check:** if the `test_cmd` program is not found, the task stops before the worker spends any tokens.
 - **Red check:** the `test_cmd` of a task must fail before the worker touches anything (`red_check`, on by default in `run_plan`). If it already passes, the task ends as `red_check_failed` without retries: it is either empty or the test verifies nothing. Set `expect_red` to false for refactors. `orchestra run --no-red-check` turns it off.

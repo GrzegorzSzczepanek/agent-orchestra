@@ -67,6 +67,16 @@ WORKER = (
 )
 
 
+CHEAP_IMPL = (
+    "import re, sys\n"
+    "tid = re.search(r'Task `(\\w+)`', sys.argv[1]).group(1)\n"
+    "open(f'test_{tid}.py', 'w').write(f\"from {tid} import VALUE\\n\\ndef test_{tid}():\\n    assert VALUE == '{tid}'\\n\")\n"
+    "print('{\"type\":\"result\",\"subtype\":\"success\",\"usage\":{\"inputTokens\":5,\"outputTokens\":2},\"finalText\":\"ok\"}')\n"
+)
+
+STRONG_PLANNER = WORKER  # writes both the module and its passing test
+
+
 def tdict(tid, deps=()):
     return {"id": tid, "description": f"do {tid}", "files": [f"{tid}.py"], "acceptance": [f"{tid} works"],
             "test_cmd": f"{sys.executable} -m pytest -q test_{tid}.py", "depends_on": list(deps)}
@@ -86,6 +96,23 @@ async def test_mcp_run_plan_and_status(git_repo: Path, tmp_path: Path):
     assert {t["id"]: t["status"] for t in status["tasks"]} == {"a": "done", "b": "done"}
     assert status["report"]["ok"] and status["integration_branch"].startswith("orchestra/run-")
     assert all(t["tokens_in"] == 5 and t["attempts"] == 1 for t in status["tasks"])
+
+
+async def test_mcp_run_plan_escalates_failed_cheap_task_to_planner(git_repo: Path, tmp_path: Path):
+    cheap, strong = tmp_path / "cheap.py", tmp_path / "strong.py"
+    cheap.write_text(CHEAP_IMPL)
+    strong.write_text(STRONG_PLANNER)
+    cfg = Config(agents={"cheap": AgentConfig(name="cheap", headless=(sys.executable, str(cheap), "{task}")),
+                         "strong": AgentConfig(name="strong", headless=(sys.executable, str(strong), "{task}"))},
+                 roles={"implementer": "cheap", "planner": "strong"})
+    server = build_server(config=cfg, repo=git_repo)
+    async with Client(server) as client:
+        started = (await client.call_tool("run_plan", {"goal": "g", "tasks": [tdict("a")]})).data
+        status = (await client.call_tool("run_status", {"run_id": started["run_id"], "wait_s": 60})).data
+    assert status["ok"], status
+    outcome = status["report"]["outcomes"]["a"]
+    assert outcome["escalated"] is True, outcome
+    assert [a["worker"] for a in outcome["attempts"]] == ["cheap", "cheap", "strong"], outcome["attempts"]
 
 
 async def test_mcp_run_plan_rejects_cycle(git_repo: Path):
