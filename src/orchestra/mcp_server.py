@@ -205,6 +205,30 @@ def build_server(config: Config | None = None, repo: str | Path | None = None) -
         names = [a for a in store.agents() if not a.startswith(("worker:", "role:", "task:", "scheduler", "inbox"))]
         return {"me": me, "agents": names}
 
+    @mcp.tool
+    def register_agent(agent: str = "", role: str = "", description: str = "") -> dict[str, Any]:
+        """Announce yourself (or a sub-agent) in the shared log so the TUI shows a row for it.
+
+        Call once at the start. `agent` defaults to the name this MCP server is attached to.
+        """
+        name = agent or me or "agent"
+        store.add_event(name, "agent_joined", {"role": role, "description": description})
+        return {"agent": name, "role": role}
+
+    @mcp.tool
+    def report_activity(agent: str = "", status: str = "working", text: str = "",
+                        tokens_in: int = 0, tokens_out: int = 0, cost: float = 0.0) -> dict[str, Any]:
+        """Publish a status line for you or a sub-agent, watched live in `orchestra watch` and the TUI.
+
+        status: idle | working | waiting | done | error | stopped. A sub-agent reports under its own
+        `agent` name and gets its own row. Call it around each step and with status="done" at the end.
+        """
+        name = agent or me or "agent"
+        st = status if status in ("idle", "working", "waiting", "done", "error", "stopped") else "working"
+        store.add_event(name, f"agent_{st}", {"text": text}, tokens_in=int(tokens_in),
+                        tokens_out=int(tokens_out), cost=float(cost))
+        return {"agent": name, "status": st}
+
     return mcp
 
 

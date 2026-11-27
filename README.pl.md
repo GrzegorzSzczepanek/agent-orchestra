@@ -143,6 +143,7 @@ Workery z `run_plan` to jednorazowe wywołania `cmd -p`, więc nie rozmawiają w
 | `run_status(run_id, wait_s)` | stan zadań, po zakończeniu raport i gałąź `orchestra/run-<id>` do recenzji |
 | `delegate(prompt, test_cmd, ...)` | pojedyncze proste zadanie w osobnym worktree z diffem i wynikiem testów |
 | `post_message`, `read_inbox`, `list_agents` | skrzynka wiadomości między agentami |
+| `register_agent`, `report_activity` | zewnętrzny agent (lub jego sub-agent) ogłasza się i publikuje statusy na żywo; każda nazwa ma własny wiersz w TUI |
 
 Zadanie w `run_plan`: `id`, `description`, `files`, `acceptance`, `test_cmd` (komenda bez powłoki, np. `pytest -q tests/test_x.py`), `cwd` (podkatalog repo, w którym działa worker i test), `difficulty` (`easy`, `medium`, `hard`), `depends_on`. Workery startują z zacommitowanego `HEAD`, więc niezacommitowane zmiany są dla nich niewidoczne (launcher `orch` ostrzega o nich).
 

@@ -117,6 +117,9 @@ def fmt_event(ev: Event, compact: bool = False) -> Text | None:
             return Text(f"{clock} ⇒ delegate {ev.agent}: {p.get('status')} ({p.get('branch', '')}){tok}", style="magenta")
         case "role_attempt":
             return Text(f"{clock} ⚑ role {ev.agent}: {p.get('status', '')}{tok}", style="blue")
+        case ("agent_joined" | "agent_idle" | "agent_working" | "agent_waiting" | "agent_done"
+              | "agent_error" | "agent_stopped"):
+            return Text(f"{clock} ● {ev.agent}: {p.get('text', '')}".rstrip(), style="cyan")
         case "error":
             return Text(f"{clock} ✗ {ev.agent}: {p.get('error', '')}", style="bold red")
     return None

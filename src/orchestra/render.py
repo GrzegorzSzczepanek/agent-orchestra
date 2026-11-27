@@ -16,6 +16,14 @@ STATUS_BY_KIND = {
     "worker_end": "idle",
     "error": "error",
     "session_end": "stopped",
+    # external agents reporting their own activity through the MCP tools
+    "agent_joined": "idle",
+    "agent_idle": "idle",
+    "agent_working": "working",
+    "agent_waiting": "waiting",
+    "agent_done": "done",
+    "agent_error": "error",
+    "agent_stopped": "stopped",
 }
 
 STREAM_KINDS = ("agent_message", "agent_thought")
@@ -74,6 +82,20 @@ def _render_one(ev: Event, compact: bool = False) -> Text | None:
             return Text("○ session ended", style="dim")
         case "error":
             return Text(f"✗ error: {p.get('error', '')}", style="bold red")
+        case "agent_joined":
+            role = f" ({p.get('role')})" if p.get("role") else ""
+            desc = f": {p.get('description')}" if p.get("description") else ""
+            return Text(f"● agent joined{role}{desc}", style="dim")
+        case "agent_working":
+            return Text(("● " + p.get("text", "")).rstrip(), style="yellow")
+        case "agent_waiting":
+            return Text(("? " + p.get("text", "")).rstrip(), style="bold magenta")
+        case "agent_done":
+            return Text(("✓ " + p.get("text", "")).rstrip(), style="bold green")
+        case "agent_error":
+            return Text(("✗ " + p.get("text", "")).rstrip(), style="bold red")
+        case "agent_idle" | "agent_stopped":
+            return Text(("○ " + p.get("text", "")).rstrip(), style="dim")
         case "user_message" | "context" | "other":
             return None
         case _:

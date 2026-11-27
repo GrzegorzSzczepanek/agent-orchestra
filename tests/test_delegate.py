@@ -82,7 +82,8 @@ async def test_mcp_tool_end_to_end(git_repo: Path):
     server = build_server(config=cfg(), repo=git_repo)
     async with Client(server) as client:
         tools = await client.list_tools()
-        assert sorted(t.name for t in tools) == ["delegate", "list_agents", "post_message", "read_inbox", "run_plan", "run_status"]
+        assert sorted(t.name for t in tools) == ["delegate", "list_agents", "post_message", "read_inbox",
+                                                 "register_agent", "report_activity", "run_plan", "run_status"]
         r = await client.call_tool("delegate", {
             "prompt": "fix", "worker": "fake", "fake_files": {**FIX, TEST: TEST_SRC},
             "test_cmd": f"{sys.executable} -m pytest -q {TEST}", "keep_worktree": False,

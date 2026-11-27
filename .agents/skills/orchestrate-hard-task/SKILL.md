@@ -16,3 +16,10 @@ description: Use for a large or hard implementation task that can be split into 
 A single, simple task without a plan: skill `delegate-simple-tasks` (the `delegate` tool).
 
 The user sees the task table in the TUI and can send hints to workers or messages to running agents. You can see the agents from the TUI through `list_agents` and write to them through `post_message`.
+
+## Visibility in orchestra
+
+- Call `register_agent(role="planner")` once so the TUI shows a row for you.
+- Wrap each step (exploring, splitting, reviewing a diff) with `report_activity(status="working", text="...")` and finish with `report_activity(status="done")`.
+- A sub-agent reports under its own `agent` name and gets its own row, so the whole job is visible.
+

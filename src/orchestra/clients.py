@@ -16,9 +16,13 @@ from pathlib import Path
 
 CLIENTS = ("claude", "opencode", "codex")  # autodetection order
 NONE = "none"
-TOOLS = ("delegate", "run_plan", "run_status", "post_message", "read_inbox", "list_agents")
+TOOLS = ("delegate", "run_plan", "run_status", "post_message", "read_inbox", "list_agents",
+         "register_agent", "report_activity")
+AUTO_ALLOW = ("delegate", "run_plan", "run_status", "register_agent", "report_activity")
 INTRO = ("You have the orchestra MCP server (workers on cheaper models). For hard tasks that can be split, "
-         "follow the instructions below.")
+         "follow the instructions below. Keep your own work visible: call register_agent once, then "
+         "report_activity(status=\"working\", text=...) around each step and report_activity(status=\"done\") "
+         "when you finish. A sub-agent reports under its own name and gets its own row.")
 
 
 @dataclass
@@ -47,8 +51,11 @@ def skill_text(skill_file: str | Path) -> str:
     return (parts[2] if text.startswith("---\n") and len(parts) == 3 else text).strip()
 
 
-def _server_env(repo: Path, config: Path) -> dict[str, str]:
-    return {"ORCHESTRA_REPO": str(repo), "ORCHESTRA_CONFIG": str(config)}
+def _server_env(repo: Path, config: Path, agent: str = "") -> dict[str, str]:
+    env = {"ORCHESTRA_REPO": str(repo), "ORCHESTRA_CONFIG": str(config)}
+    if agent:
+        env["ORCHESTRA_AGENT"] = agent
+    return env
 
 
 def _server_cmd() -> str:
@@ -59,19 +66,21 @@ def build_launch(client: str, repo: str | Path, config: str | Path, skill: str, 
     repo, config, extra = Path(repo).resolve(), Path(config).resolve(), list(extra or [])
     instructions = f"{INTRO}\n\n{skill}"
     if client == "claude":
-        mcp = {"mcpServers": {"orchestra": {"command": _server_cmd(), "args": [], "env": _server_env(repo, config)}}}
+        mcp = {"mcpServers": {"orchestra": {"command": _server_cmd(), "args": [],
+                                            "env": _server_env(repo, config, "claude")}}}
         return Launch(["claude", "--mcp-config", json.dumps(mcp), "--allowedTools",
-                       *[f"mcp__orchestra__{t}" for t in TOOLS[:3]], "--append-system-prompt", instructions, *extra])
+                       *[f"mcp__orchestra__{t}" for t in AUTO_ALLOW], "--append-system-prompt", instructions, *extra])
     if client == "opencode":
         skill_path = repo / ".orchestra" / "skill.md"
         skill_path.parent.mkdir(parents=True, exist_ok=True)
         skill_path.write_text(instructions + "\n", encoding="utf-8")
-        cfg = {"mcp": {"orchestra": {"type": "local", "command": [_server_cmd()], "environment": _server_env(repo, config),
+        cfg = {"mcp": {"orchestra": {"type": "local", "command": [_server_cmd()],
+                                     "environment": _server_env(repo, config, "opencode"),
                                      "enabled": True}},
                "instructions": [str(skill_path)], "permission": {"orchestra_*": "allow"}}
         return Launch(["opencode", *extra], {"OPENCODE_CONFIG_CONTENT": json.dumps(cfg)})
     if client == "codex":
-        env = ", ".join(f"{k}={json.dumps(v)}" for k, v in _server_env(repo, config).items())
+        env = ", ".join(f"{k}={json.dumps(v)}" for k, v in _server_env(repo, config, "codex").items())
         first = ("Do nothing yet, confirm in one sentence. Remember these instructions for the next tasks:\n\n" + instructions)
         return Launch(["codex", "-c", f"mcp_servers.orchestra.command={json.dumps(_server_cmd())}",
                        "-c", "mcp_servers.orchestra.args=[]", "-c", f"mcp_servers.orchestra.env={{{env}}}",

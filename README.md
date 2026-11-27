@@ -145,6 +145,7 @@ Workers from `run_plan` are one-shot `cmd -p` calls, so they do not converse whi
 | `run_status(run_id, wait_s)` | task states, and after completion a report and the `orchestra/run-<id>` branch to review |
 | `delegate(prompt, test_cmd, ...)` | a single simple task in its own worktree, with a diff and test result |
 | `post_message`, `read_inbox`, `list_agents` | message inbox between agents |
+| `register_agent`, `report_activity` | an external agent (or its sub-agent) announces itself and publishes live status lines; each name gets its own row in the TUI |
 
 A `run_plan` task has: `id`, `description`, `files`, `acceptance`, `test_cmd` (a command without a shell, e.g. `pytest -q tests/test_x.py`), `cwd` (a repo subdirectory where the worker and the test run), `difficulty` (`easy`, `medium`, `hard`), `depends_on`. Workers start from the committed `HEAD`, so uncommitted changes are invisible to them (the `orch` launcher warns about them).
 
