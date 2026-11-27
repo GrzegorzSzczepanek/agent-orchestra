@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import os
+import uuid
 from pathlib import Path
 from typing import Any
 
 from fastmcp import FastMCP
 
+from .commandcode import summarize_frame
 from .config import Config, load_config
 from .delegate import _missing_test_binary, delegate as run_delegate
 from .ledger import budget_state
@@ -58,6 +60,22 @@ def build_server(config: Config | None = None, repo: str | Path | None = None) -
         if (blocked := budget_block()) is not None:
             return blocked
         cfg.reload_overrides(default_repo)  # roles and models chosen in the TUI
+        worker_name = worker or cfg.role_name("implementer")
+        # A single delegation is logged as a one-task run, so `orchestra watch` and the TUI show it
+        # in the task table with live worker steps instead of a single line in the feed.
+        run_id, task_id = uuid.uuid4().hex[:8], "delegate"
+        store.add_event("scheduler", "run_start", {
+            "run_id": run_id, "goal": prompt[:200], "tasks": 1, "parallel": 1, "integration_branch": "",
+            "plan": [{"id": task_id, "difficulty": "delegate", "depends_on": [], "description": prompt[:120]}]})
+        store.add_event("scheduler", "task_start", {"run_id": run_id, "task_id": task_id})
+
+        def on_line(line: str) -> None:
+            step = summarize_frame(line)
+            if step is not None:
+                store.add_event(f"task:{task_id}", "worker_step",
+                                {"run_id": run_id, "task_id": task_id, "worker": worker_name, "attempt": 1,
+                                 "step": step[0], "text": step[1]})
+
         result = await run_delegate(
             cfg,
             default_repo,
@@ -70,13 +88,27 @@ def build_server(config: Config | None = None, repo: str | Path | None = None) -
             keep_worktree=keep_worktree,
             fake_files=fake_files,
             red_check=red_check,
+            on_line=on_line,
         )
         usage = result.usage or {}
-        store.add_event(f"worker:{result.worker or worker}", "delegate",
+        tok_in, tok_out = int(usage.get("tokens_in", 0)), int(usage.get("tokens_out", 0))
+        files = sorted({ln.split(" b/")[-1] for ln in result.diff.splitlines() if ln.startswith("diff --git")})[:20]
+        store.add_event(f"worker:{result.worker or worker_name}", "task_attempt", {
+            "run_id": run_id, "task_id": task_id, "attempt": 1, "status": result.status, "escalated": False,
+            "cache_read": int(usage.get("cache_read", 0)), "cache_write": int(usage.get("cache_write", 0)),
+            "error": result.error[-800:], "test_cmd": result.test_cmd, "cwd": "",
+            "test_exit_code": result.test_exit_code, "test_output": result.test_output[-3000:],
+            "worker_text": result.worker_text[-1500:], "files": files},
+            tokens_in=tok_in, tokens_out=tok_out, cost=float(result.cost_usd))
+        done = result.status == "ok"
+        store.add_event("scheduler", "task_end", {"run_id": run_id, "task_id": task_id,
+                                                  "status": "done" if done else "failed", "attempts": 1,
+                                                  "escalated": False, "tokens": tok_in + tok_out})
+        store.add_event("scheduler", "run_end", {"run_id": run_id, "ok": done, "integration_branch": result.branch})
+        store.add_event(f"worker:{result.worker or worker_name}", "delegate",
                         {"status": result.status, "branch": result.branch, "exit_code": result.worker_exit_code,
                          "cache_read": int(usage.get("cache_read", 0)), "cache_write": int(usage.get("cache_write", 0))},
-                        tokens_in=int(usage.get("tokens_in", 0)), tokens_out=int(usage.get("tokens_out", 0)),
-                        cost=float(result.cost_usd))
+                        tokens_in=tok_in, tokens_out=tok_out, cost=float(result.cost_usd))
         return result.to_dict()
 
     runs: dict[str, tuple[Scheduler, asyncio.Task[RunReport]]] = {}

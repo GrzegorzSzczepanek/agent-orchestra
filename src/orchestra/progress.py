@@ -58,6 +58,8 @@ def build_runs(events: list[Event]) -> dict[str, RunView]:
                                                   t.get("description", ""))
             case "run_end":
                 run.finished, run.ok, run.ended = True, bool(p.get("ok")), ev.ts
+                if not run.integration_branch:
+                    run.integration_branch = p.get("integration_branch", "")
             case "task_start":
                 t = run.tasks.setdefault(p["task_id"], TaskView(p["task_id"]))
                 t.status, t.started = "running", ev.ts

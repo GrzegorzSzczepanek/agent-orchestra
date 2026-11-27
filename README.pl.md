@@ -12,7 +12,7 @@ Orkiestrator agentów kodujących z hierarchią kosztową. Claude Code rozbija t
 
 - **Taniej.** Planowanie, projektowanie i recenzja zostają przy mocnym modelu, a żmudna implementacja idzie do modelu około 20 razy tańszego za token.
 - **Bezpieczniej.** Każdy worker pracuje w osobnym worktree, a `main` nie jest ruszany. Zmiany wracają na gałąź `orchestra/run-<id>`, którą recenzujesz i scalasz sam.
-- **Widocznie.** Zadania, kroki workerów (komendy, zapisy plików, wyniki testów), tokeny i rozmowy agentów są w jednym oknie.
+- **Widocznie.** Zadania, kroki workerów (komendy, zapisy plików, wyniki testów), tokeny i rozmowy agentów są w jednym oknie. Pojedyncze wywołanie `delegate` pokazuje się jako run z jednym zadaniem i krokami workera na żywo, a nie tylko jako linia w logu.
 - **Sterowalnie.** Możesz dać workerowi wskazówkę, anulować przebieg, dodać nowego agenta, napisać do działającego agenta albo obejrzeć diff.
 
 ## Jak to działa

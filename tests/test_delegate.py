@@ -89,11 +89,42 @@ async def test_mcp_tool_end_to_end(git_repo: Path):
         })
         data = r.data
         assert data["status"] == "ok" and data["test_exit_code"] == 0
-    # delegation goes to the shared log (visible in the TUI)
+    # a single delegation is also a one-task run in the shared log (visible in the TUI)
+    from orchestra.progress import build_runs
     from orchestra.store import EventStore
 
-    evs = EventStore(git_repo / ".orchestra" / "events.db").events(agent="worker:fake")
-    assert [e.kind for e in evs] == ["delegate"] and evs[0].payload["status"] == "ok"
+    store = EventStore(git_repo / ".orchestra" / "events.db")
+    kinds = [e.kind for e in store.events(agent="worker:fake")]
+    assert "delegate" in kinds and "task_attempt" in kinds
+    run = next(iter(build_runs(store.events()).values()))
+    assert run.finished and run.ok and run.integration_branch.startswith("orchestra/")
+    assert run.tasks["delegate"].status == "done" and run.tasks["delegate"].worker == "fake"
+
+
+async def test_mcp_delegate_streams_steps_and_shows_as_run(git_repo: Path, tmp_path: Path):
+    script = tmp_path / "streaming.py"
+    script.write_text(
+        "import sys, json\n"
+        "print(json.dumps({'type': 'event', 'event': {'type': 'tool_queued', 'toolName': 'write_file',"
+        " 'input': {'file_path': 'app.py'}}}))\n"
+        "open('app.py', 'w').write('def add(a, b):\\n    return a + b\\n')\n"
+        "print(json.dumps({'type': 'result', 'subtype': 'success',"
+        " 'usage': {'inputTokens': 7, 'outputTokens': 3}, 'finalText': 'done'}))\n"
+    )
+    c = cfg(streaming=AgentConfig(name="streaming", headless=(sys.executable, str(script), "{task}")))
+    server = build_server(config=c, repo=git_repo)
+    async with Client(server) as client:
+        data = (await client.call_tool("delegate", {"prompt": "fix", "worker": "streaming"})).data
+    assert data["status"] == "ok", data
+    from orchestra.progress import build_runs
+    from orchestra.store import EventStore
+
+    store = EventStore(git_repo / ".orchestra" / "events.db")
+    steps = store.events(agent="task:delegate", kind="worker_step")
+    assert [e.payload["step"] for e in steps] == ["tool"]
+    run = next(iter(build_runs(store.events()).values()))
+    task = run.tasks["delegate"]
+    assert run.ok and task.status == "done" and task.tokens_in == 7 and task.tokens_out == 3
 
 
 async def test_mcp_stdio_subprocess(git_repo: Path):

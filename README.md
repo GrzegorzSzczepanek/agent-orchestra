@@ -14,7 +14,7 @@ A cost-aware orchestrator for coding agents. Claude Code breaks a hard task into
 
 - **Cheaper.** Planning, design and review stay with the strong model, while the tedious implementation goes to a model roughly 20 times cheaper per token.
 - **Safer.** Every worker runs in its own worktree and `main` is never touched. Changes come back on an `orchestra/run-<id>` branch that you review and merge yourself.
-- **Visible.** Tasks, worker steps (commands, file writes, test results), tokens and agent conversations are all in one window.
+- **Visible.** Tasks, worker steps (commands, file writes, test results), tokens and agent conversations are all in one window. A single `delegate` call is shown as a one-task run with live worker steps, not just a line in the log.
 - **Steerable.** You can give a worker a hint, cancel a run, add a new agent, message a running agent or inspect a diff.
 
 ## How it works
